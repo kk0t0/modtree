@@ -1,0 +1,6 @@
+{
+  "name": "modtree",
+  "displayName": "模块树",
+  "version": "0.1.0",
+  "description": "Agent 自主驱动的模块树开发工作台：Aux Pane 常驻侧栏、原生会话切换、Plan/Code/Review 门禁、Git Worktree 隔离与 MCP 进度回写。"
+}

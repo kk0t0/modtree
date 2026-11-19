@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.worktrees/
+*.log
+*.lock
+.env
+.env.*
+.DS_Store
+Thumbs.db

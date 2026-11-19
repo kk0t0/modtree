@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "server": {
+      "command": "node",
+      "args": ["${PLUGIN_ROOT}/mcp/server.mjs"],
+      "env": {
+        "PLUGIN_DATA": "${PLUGIN_DATA}"
+      }
+    }
+  }
+}
