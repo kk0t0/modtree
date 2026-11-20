@@ -131,5 +131,48 @@ describe('MCP stdio server contract', () => {
       dataDir,
     );
     expect(((setSt?.result as { content: Array<{ text: string }> }).content[0]).text).toContain('Code');
+
+    // Self-binding via modtree_bind_session immediately returns full 4-layer cold-start context + stage skills
+    const bindRes = handleMcpRequest(
+      {
+        id: 9,
+        method: 'tools/call',
+        params: {
+          name: 'modtree_bind_session',
+          arguments: {
+            workspacePath: wsA,
+            moduleId: createdA.id,
+            conversationId: '99999999-9999-9999-9999-999999999999',
+            stage: 'Plan',
+            dedicatedForStage: true,
+            title: '[Plan] 字段选择 · 首版设计',
+          },
+        },
+      },
+      dataDir,
+    );
+    const bindText = ((bindRes?.result as { content: Array<{ text: string }> }).content[0]).text;
+    expect(bindText).toContain('[modtree: bound');
+    expect(bindText).toContain('保留顺序');
+    expect(bindText).toContain('search-first');
+
+    // Plan session updating design with its own conversationId syncs itself (no self-bounce) while other sessions drift
+    const updRes = handleMcpRequest(
+      {
+        id: 10,
+        method: 'tools/call',
+        params: {
+          name: 'modtree_update_module',
+          arguments: {
+            workspacePath: wsA,
+            moduleId: createdA.id,
+            conversationId: '99999999-9999-9999-9999-999999999999',
+            design: '二版设计：支持拖拽排序',
+          },
+        },
+      },
+      dataDir,
+    );
+    expect((updRes?.result as { isError?: boolean }).isError).toBeUndefined();
   });
 });

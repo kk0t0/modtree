@@ -4,6 +4,7 @@ import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SidecarApp, Response } from 'sidecar_sdk';
 import {
+  buildBootstrapPrompt,
   buildColdStartPrompt,
   buildDriftInjectionMessage,
   computeAncestorAndDepHash,
@@ -35,6 +36,7 @@ import {
   createModule,
   getModulePathString,
   resolveEffectiveGit,
+  resolveSessionEffectiveStage,
   resolveStageSessionId,
   setModuleStage,
   unbindSessionFromModule,
@@ -48,10 +50,11 @@ import {
   ModuleStage,
   ModuleStatus,
   SidecarSnapshot,
+  TranscriptObservation,
 } from '../core/types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const UI_VERSION = '0.1.4';
+const UI_VERSION = '0.1.8';
 const ID_RE = /^[0-9a-f-]{8,}$/i;
 
 const MIME_BY_EXT: Record<string, string> = {
@@ -142,19 +145,46 @@ function buildSnapshot(workspacePath: string): SidecarSnapshot {
   const enriched: Record<string, EnrichedModuleView> = {};
   const activeCodeModulesOnMain: string[] = [];
 
+  const obsCache = new Map<string, TranscriptObservation>();
+  const getObs = (convId: string): TranscriptObservation => {
+    if (!convId) return observeTranscript('', appDataDir);
+    let cached = obsCache.get(convId);
+    if (!cached) {
+      cached = observeTranscript(convId, appDataDir);
+      obsCache.set(convId, cached);
+    }
+    return cached;
+  };
+
   for (const mod of Object.values(project.modules)) {
     if (mod.archived) continue;
     const effectiveGit = resolveEffectiveGit(project, mod.id);
     const gitRuntime =
       effectiveGit.mode === 'worktree' ? getModuleGitRuntime(project, mod.id) : undefined;
     const activeConvId = resolveStageSessionId(mod, mod.stage);
-    const observation = observeTranscript(activeConvId, appDataDir);
+    const observation = getObs(activeConvId);
     const sessionRec = (mod.sessions || []).find((s) => s.conversationId === activeConvId);
     const drift = detectSessionDrift(project, mod.id, sessionRec);
     const childProgress = computeChildProgress(project, mod.id);
     const stageSessionMap = buildStageSessionMap(mod);
 
-    if (effectiveGit.mode === 'main' && mod.stage === 'Code' && observation.state === 'running') {
+    const stageObservations: Partial<Record<ModuleStage, TranscriptObservation>> = {};
+    for (const st of MODULE_STAGES) {
+      const cid = stageSessionMap[st]?.conversationId;
+      if (cid) {
+        stageObservations[st] = getObs(cid);
+      }
+    }
+
+    const codeSessionRunning = (mod.sessions || [])
+      .filter((s) => !s.archived)
+      .some(
+        (s) =>
+          resolveSessionEffectiveStage(mod, s) === 'Code' &&
+          getObs(s.conversationId).state === 'running',
+      );
+
+    if (effectiveGit.mode === 'main' && codeSessionRunning) {
       activeCodeModulesOnMain.push(mod.id);
     }
 
@@ -163,6 +193,8 @@ function buildSnapshot(workspacePath: string): SidecarSnapshot {
       effectiveGit,
       gitRuntime,
       observation,
+      stageObservations,
+      codeSessionRunning,
       drift,
       childProgress,
       stageSessionMap,
@@ -452,30 +484,78 @@ app.api('/api/sessions/bind', (data) => {
       ? (data.stage as ModuleStage)
       : undefined;
   const dedicated = Boolean(data.dedicatedForStage);
+  const rawTitle = typeof data.title === 'string' ? data.title.trim() : '';
 
   mutateProject(ws, (proj) => {
     const mod = proj.modules[moduleId];
     if (!mod) throw new Error(`模块不存在: ${moduleId}`);
     const useStage = stage || mod.stage;
+    const hasOtherStageSession = (mod.sessions || []).some(
+      (s) => !s.archived && s.conversationId !== conversationId && s.stage !== useStage,
+    );
+    const bindStage = dedicated || hasOtherStageSession ? useStage : undefined;
+    const formattedTitle = rawTitle
+      ? rawTitle.startsWith('[')
+        ? rawTitle
+        : `[${useStage}] ${mod.name} · ${rawTitle}`
+      : `[${useStage}] ${mod.name}`;
+
+    if (useStage === 'Code' && (mod.status === '待设计' || mod.status === '已完成')) {
+      mod.status = '开发中';
+    }
+    if (useStage === 'Code' && !mod.git?.baseCommit) {
+      const repo = getRepoOverview(proj.workspacePath);
+      if (repo.isGitRepo && repo.headCommit) {
+        mod.git = {
+          mode: mod.git?.mode || 'main',
+          inheritFromParent: mod.git ? mod.git.inheritFromParent : true,
+          ...mod.git,
+          baseBranch: mod.git?.baseBranch || repo.currentBranch,
+          baseCommit: repo.headCommit,
+        };
+      }
+    }
+
     bindSessionToModule(
       proj,
       moduleId,
       {
         conversationId,
-        title: typeof data.title === 'string' && data.title.trim() ? data.title.trim() : `[${useStage}] ${mod.name}`,
+        title: formattedTitle,
         stage: useStage,
-        syncedRev: mod.rev,
-        syncedAncestorHash: computeAncestorAndDepHash(proj, moduleId),
-        syncedStage: useStage,
-        syncedReviewNotesHash: computeReviewNotesHash(mod),
+        // syncedRev = 0 triggers one-time full cold-start context injection on next PreInvocation
+        syncedRev: 0,
+        syncedAncestorHash: '',
+        syncedStage: undefined,
+        syncedReviewNotesHash: '',
       },
       {
-        setAsPrimary: !dedicated || !mod.activeSessionId,
-        bindStage: dedicated ? useStage : undefined,
+        setAsPrimary: !bindStage || !mod.activeSessionId,
+        bindStage,
       },
     );
   });
   return buildSnapshot(ws);
+}, 'POST');
+
+app.api('/api/sessions/bootstrap-prompt', (data) => {
+  const ws = requireWorkspace(data);
+  const moduleId = String(data.moduleId || '').trim();
+  const stage =
+    typeof data.stage === 'string' && MODULE_STAGES.includes(data.stage as ModuleStage)
+      ? (data.stage as ModuleStage)
+      : undefined;
+  const sessionTitle = typeof data.sessionTitle === 'string' ? data.sessionTitle : undefined;
+  const grillMe = data.grillMe !== false;
+  const dedicatedForStage = data.dedicatedForStage !== false;
+  const project = loadProject(ws);
+  const prompt = buildBootstrapPrompt(project, moduleId, {
+    stage,
+    sessionTitle,
+    grillMe,
+    dedicatedForStage,
+  });
+  return { prompt };
 }, 'POST');
 
 app.api('/api/sessions/unbind', (data) => {

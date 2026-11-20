@@ -7,6 +7,7 @@ import type {
 } from '../core/types.js';
 import {
   apiPost,
+  copyTextToClipboard,
   fetchSnapshot,
   getHostConversationId,
   openNativeConversation,
@@ -26,6 +27,7 @@ export function App() {
   const [manualTheme, setManualTheme] = useState<'light' | 'dark' | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [dialogMode, setDialogMode] = useState<'merge' | 'cleanup' | 'dirty-wt' | null>(null);
+  const [pendingStageSwitch, setPendingStageSwitch] = useState<ModuleStage | null>(null);
   const [toast, setToast] = useState<{ text: string; isErr?: boolean } | null>(null);
 
   const toastTimer = useRef<number | null>(null);
@@ -191,7 +193,7 @@ export function App() {
     }
   }
 
-  async function handleSetStage(stage: ModuleStage) {
+  async function executeSetStage(stage: ModuleStage) {
     if (!selectedView) return;
     try {
       const next = await apiPost<SidecarSnapshot>('/api/modules/stage', {
@@ -200,15 +202,22 @@ export function App() {
         stage,
       });
       setSnapshot(next);
-      const updatedView = next.enriched[selectedView.node.id];
-      const targetConv = updatedView?.stageSessionMap[stage]?.conversationId;
-      if (updatedView?.stageSessionMap[stage]?.dedicated && targetConv && targetConv !== hostConvId) {
-        openNativeConversation(targetConv);
-      }
-      notify(`已切换至 ${stage} 阶段`);
+      setPendingStageSwitch(null);
+      notify(`当前默认阶段已切为 ${stage}`);
     } catch (err) {
       notify(err instanceof Error ? err.message : String(err), true);
     }
+  }
+
+  async function handleSetStage(stage: ModuleStage) {
+    if (!selectedView) return;
+    if (stage === selectedView.node.stage) return;
+    // Guard against accidentally interrupting a running Code session when clicking Plan/Review
+    if (stage !== 'Code' && selectedView.codeSessionRunning) {
+      setPendingStageSwitch(stage);
+      return;
+    }
+    await executeSetStage(stage);
   }
 
   async function handleBackToCodeFix() {
@@ -294,7 +303,7 @@ export function App() {
     }
   }
 
-  async function handleBindCurrent(dedicatedForStage: boolean) {
+  async function handleBindCurrent(dedicatedForStage: boolean, title?: string) {
     if (!selectedView || !hostConvId) return;
     try {
       const next = await apiPost<SidecarSnapshot>('/api/sessions/bind', {
@@ -303,11 +312,40 @@ export function App() {
         conversationId: hostConvId,
         stage: selectedView.node.stage,
         dedicatedForStage,
+        title: title?.trim() || undefined,
       });
       setSnapshot(next);
-      notify('已绑定当前会话');
+      notify('已绑定当前原生会话（下次发消息自动静默注入完整上下文）');
     } catch (err) {
       notify(err instanceof Error ? err.message : String(err), true);
+    }
+  }
+
+  async function handleCopyBootstrapPrompt(
+    stage: ModuleStage,
+    sessionTitle?: string,
+    grillMe?: boolean,
+  ): Promise<{ prompt: string; copied: boolean }> {
+    if (!selectedView) return { prompt: '', copied: false };
+    try {
+      const res = await apiPost<{ prompt: string }>('/api/sessions/bootstrap-prompt', {
+        workspacePath: wsParam,
+        moduleId: selectedView.node.id,
+        stage,
+        sessionTitle: sessionTitle?.trim() || undefined,
+        grillMe: Boolean(grillMe),
+        dedicatedForStage: true,
+      });
+      const copied = await copyTextToClipboard(res.prompt);
+      if (copied) {
+        notify('已复制开场指令！请点左上角「+」新建原生会话并粘贴发送');
+      } else {
+        notify('剪贴板受限，请直接手动复制下方指令框内容', true);
+      }
+      return { prompt: res.prompt, copied };
+    } catch (err) {
+      notify(err instanceof Error ? err.message : String(err), true);
+      return { prompt: '', copied: false };
     }
   }
 
@@ -540,6 +578,7 @@ export function App() {
               onSaveProgress={handleSaveProgress}
               onArchive={handleArchive}
               onBindCurrent={handleBindCurrent}
+              onCopyBootstrapPrompt={handleCopyBootstrapPrompt}
               onCreateSession={handleCreateSession}
               onUnbindSession={handleUnbindSession}
               onPushContext={handlePushContext}
@@ -566,11 +605,50 @@ export function App() {
           onConfirmCleanup={handleConfirmCleanup}
           onConfirmCreateWorktree={executeCreateWorktree}
           onStartIndependentReview={async () => {
-            await handleSetStage('Review');
-            await handleCreateSession('Review', true, '合并前独立终审');
+            await handleCopyBootstrapPrompt('Review', '合并前独立终审', false);
             setDialogMode(null);
           }}
         />
+      )}
+
+      {pendingStageSwitch && selectedView && (
+        <div className="mt-modal-backdrop" role="dialog" aria-modal="true" aria-label="确认切换阶段">
+          <div className="mt-modal">
+            <h3 style={{ margin: '0 0 8px', fontSize: 14 }}>⚠️ 当前模块的 Code 会话正在运行中</h3>
+            <p style={{ margin: '0 0 10px', fontSize: 12.5, lineHeight: 1.5 }}>
+              如果你只是想查看 <b>{pendingStageSwitch}</b> 的聊天记录，请直接打开该阶段会话，无需切换模块默认阶段（已独立绑定的 Code 会话写入权限也不会被打断）。
+            </p>
+            <div className="mt-row" style={{ justifyContent: 'flex-end', gap: 6 }}>
+              {selectedView.stageSessionMap[pendingStageSwitch]?.conversationId && (
+                <button
+                  type="button"
+                  className="mt-primary"
+                  onClick={() => {
+                    openNativeConversation(
+                      selectedView.stageSessionMap[pendingStageSwitch].conversationId,
+                    );
+                    setPendingStageSwitch(null);
+                  }}
+                >
+                  仅打开 {pendingStageSwitch} 会话 ↗
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => void executeSetStage(pendingStageSwitch)}
+              >
+                仍切换阶段为 {pendingStageSwitch}
+              </button>
+              <button
+                type="button"
+                className="mt-ghost"
+                onClick={() => setPendingStageSwitch(null)}
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {toast && <div className={`mt-toast${toast.isErr ? ' err' : ''}`}>{toast.text}</div>}

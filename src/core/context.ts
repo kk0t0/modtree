@@ -6,6 +6,7 @@ import {
   getModulePathString,
   getSiblings,
   resolveEffectiveGit,
+  resolveSessionEffectiveStage,
 } from './tree.js';
 import {
   DriftSummary,
@@ -56,6 +57,14 @@ export function detectSessionDrift(
   const mod = project.modules[moduleId];
   if (!mod || !session) return { outdated: false, reasons: [] };
 
+  if ((session.syncedRev || 0) === 0) {
+    return {
+      outdated: true,
+      reasons: ['首次绑定当前模块，下轮自动注入完整上下文'],
+    };
+  }
+
+  const effectiveStage = resolveSessionEffectiveStage(mod, session);
   const reasons: string[] = [];
   if ((session.syncedRev || 0) < (mod.rev || 1)) {
     reasons.push('本模块设计/关联文件已更新');
@@ -64,8 +73,8 @@ export function detectSessionDrift(
   if (session.syncedAncestorHash && session.syncedAncestorHash !== curAncHash) {
     reasons.push('父模块约束或依赖模块设计已更新');
   }
-  if (session.syncedStage && session.syncedStage !== mod.stage) {
-    reasons.push(`阶段已切换为 ${mod.stage}`);
+  if (session.syncedStage && session.syncedStage !== effectiveStage) {
+    reasons.push(`阶段已切换为 ${effectiveStage}`);
   }
   const curReviewHash = computeReviewNotesHash(mod);
   if (
@@ -210,8 +219,51 @@ export function buildColdStartPrompt(
   return lines.join('\n');
 }
 
+export interface BuildBootstrapPromptOptions {
+  stage?: ModuleStage;
+  sessionTitle?: string;
+  grillMe?: boolean;
+  dedicatedForStage?: boolean;
+}
+
+/**
+ * Copyable opening prompt for Antigravity's native "+ New Conversation".
+ * Line 1 gives Antigravity a clean readable sidebar title; line 2 triggers
+ * modtree_bind_session self-binding which immediately returns full 4-layer context.
+ */
+export function buildBootstrapPrompt(
+  project: ProjectState,
+  moduleId: string,
+  options: BuildBootstrapPromptOptions = {},
+): string {
+  const mod = project.modules[moduleId];
+  if (!mod) throw new Error(`模块不存在: ${moduleId}`);
+
+  const stage = options.stage || mod.stage;
+  const pathStr = getModulePathString(project, moduleId);
+  const customTitle = options.sessionTitle?.trim() || '';
+  const displayTitle = customTitle
+    ? `[${stage}] ${mod.name} · ${customTitle}`
+    : `[${stage}] ${pathStr}`;
+  const dedicated = options.dedicatedForStage !== false;
+
+  const lines: string[] = [
+    displayTitle,
+    `请先调用 modtree_bind_session 将当前会话绑定到模块「${pathStr}」（参数：workspacePath=${JSON.stringify(project.workspacePath)}，moduleId=${JSON.stringify(mod.id)}，conversationId=当前会话 ID，stage=${JSON.stringify(stage)}，dedicatedForStage=${dedicated}，title=${JSON.stringify(displayTitle)}），然后严格按照工具返回的模块上下文、阶段门禁与本阶段推荐技能开始工作。`,
+  ];
+
+  if (stage === 'Plan' && options.grillMe) {
+    lines.push(
+      '绑定完成后，请先结合代码库与上级约束做必要核查，再用 ask_question 工具以 Grill-me 访谈方式沿设计树逐分支向我确认关键决策（每次 1 题，首项给 (Recommended) 推荐答案），全部对齐后调用 modtree_update_module 将精炼设计要点写入 design（≤500 字）。',
+    );
+  }
+
+  return lines.join('\n');
+}
+
 /**
  * Incremental system message injected by PreInvocation hook on drift (zero wasted LLM turns).
+ * When a native session is newly bound via sidebar (syncedRev === 0), injects full cold-start context once.
  */
 export function buildDriftInjectionMessage(
   project: ProjectState,
@@ -223,15 +275,28 @@ export function buildDriftInjectionMessage(
   const drift = detectSessionDrift(project, moduleId, session);
   if (!drift.outdated) return null;
 
+  const effectiveStage = resolveSessionEffectiveStage(mod, session);
+
+  // First turn after binding an existing/blank native session: inject full 4-layer funnel context once
+  if ((session.syncedRev || 0) === 0) {
+    return buildColdStartPrompt(project, moduleId, {
+      stage: effectiveStage,
+      sessionTitle: session.title,
+    });
+  }
+
   const effGit = resolveEffectiveGit(project, moduleId);
   const pathStr = getModulePathString(project, moduleId);
   const lines: string[] = [
     `[modtree 上下文增量同步] 模块「${pathStr}」(${mod.id}) 在外部发生更新：${drift.reasons.join('；')}。`,
-    `当前阶段：${mod.stage} | 状态：${mod.status} | 工作目录：${effGit.workingDir}${effGit.branch ? ` (${effGit.branch})` : ''}`,
+    `当前会话阶段：${effectiveStage} | 状态：${mod.status} | 工作目录：${effGit.workingDir}${effGit.branch ? ` (${effGit.branch})` : ''}`,
   ];
 
   if ((session.syncedRev || 0) < (mod.rev || 1)) {
     lines.push(`最新设计：${mod.design || '（空）'}`);
+    if (mod.stop || mod.next) {
+      lines.push(`最新进度：停在「${mod.stop || '无'}」；下一步「${mod.next || '无'}」`);
+    }
     if (mod.linkedFiles?.length) {
       lines.push(`关联文件：${mod.linkedFiles.join(', ')}`);
     }
@@ -257,14 +322,14 @@ export function buildDriftInjectionMessage(
     lines.push(`⚠️ Review 返工问题清单（请优先按此修复）：\n${mod.reviewNotes}`);
   }
 
-  if (session.syncedStage && session.syncedStage !== mod.stage) {
-    if (mod.stage === 'Plan') {
+  if (session.syncedStage && session.syncedStage !== effectiveStage) {
+    if (effectiveStage === 'Plan') {
       lines.push('门禁提示：已切换为 Plan 只读规划阶段，禁止修改工作区代码。');
-    } else if (mod.stage === 'Code') {
+    } else if (effectiveStage === 'Code') {
       lines.push(
         `门禁提示：已切换为 Code 编码阶段，请以磁盘最新代码为准${effGit.mode === 'worktree' ? `并在 ${effGit.worktreePath} 内操作` : ''}。`,
       );
-    } else if (mod.stage === 'Review') {
+    } else if (effectiveStage === 'Review') {
       lines.push(
         `门禁提示：已切换为 Review 只读审查阶段，请基于 ${effGit.mode === 'worktree' && effGit.baseBranch ? `git diff ${effGit.baseBranch}...HEAD` : 'baseCommit/未提交改动与 linkedFiles'} 审查；发现问题写入 reviewNotes。`,
       );
@@ -276,7 +341,7 @@ export function buildDriftInjectionMessage(
       moduleName: mod.name,
       slug: mod.id,
     });
-    lines.push(formatStageSkillsPrompt(mod.stage, { cppStack, compact: true }));
+    lines.push(formatStageSkillsPrompt(effectiveStage, { cppStack, compact: true }));
   }
 
   return lines.join('\n');

@@ -1,8 +1,10 @@
 import { createInterface } from 'node:readline';
 import {
+  buildColdStartPrompt,
   computeAncestorAndDepHash,
   computeReviewNotesHash,
 } from '../core/context.js';
+import { getModuleGitRuntime, getRepoOverview } from '../core/git.js';
 import {
   loadProject,
   lookupSessionBinding,
@@ -159,6 +161,10 @@ export const MCP_TOOLS = [
       properties: {
         workspacePath: { type: 'string' },
         moduleId: { type: 'string' },
+        conversationId: {
+          type: 'string',
+          description: 'Optional caller conversationId so the caller session is marked synced without self-bouncing drift.',
+        },
         name: { type: 'string' },
         parentId: { type: ['string', 'null'] },
         design: {
@@ -191,7 +197,8 @@ export const MCP_TOOLS = [
   },
   {
     name: 'modtree_bind_session',
-    description: 'Bind a conversationId to a module (optionally for a specific stage).',
+    description:
+      'Bind a conversationId to a module (optionally dedicated to a stage) and immediately return the full 4-layer cold-start module context and stage-routed skills.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -246,7 +253,7 @@ export function handleMcpRequest(
       result: {
         protocolVersion,
         capabilities: { tools: {} },
-        serverInfo: { name: 'modtree-mcp-server', version: '0.1.0' },
+        serverInfo: { name: 'modtree-mcp-server', version: '0.1.8' },
       },
     };
   }
@@ -355,10 +362,12 @@ export function handleMcpRequest(
             result: errText('modtree_update_progress 不允许修改 stage，请仅在用户明确要求时使用 modtree_set_stage'),
           };
         }
+        const callerConvId =
+          typeof args.conversationId === 'string' ? args.conversationId.trim() : '';
         const { project, result: updated } = mutateProject(
           workspacePath,
-          (proj) =>
-            updateModuleProgress(proj, moduleId, {
+          (proj) => {
+            const node = updateModuleProgress(proj, moduleId, {
               stop: typeof args.stop === 'string' ? args.stop : undefined,
               next: typeof args.next === 'string' ? args.next : undefined,
               status:
@@ -372,7 +381,16 @@ export function handleMcpRequest(
               clearReviewNotes: Boolean(args.clearReviewNotes),
               allowComplete: false,
               updatedBy: 'mcp-agent',
-            }),
+            });
+            if (callerConvId) {
+              const callerRec = (node.sessions || []).find((s) => s.conversationId === callerConvId);
+              if (callerRec) {
+                callerRec.syncedRev = node.rev;
+                callerRec.syncedReviewNotesHash = computeReviewNotesHash(node);
+              }
+            }
+            return node;
+          },
           dataDir,
         );
         return {
@@ -463,10 +481,12 @@ export function handleMcpRequest(
             ),
           };
         }
+        const callerConvId =
+          typeof args.conversationId === 'string' ? args.conversationId.trim() : '';
         const { project, result: updated } = mutateProject(
           workspacePath,
-          (proj) =>
-            updateModule(proj, moduleId, {
+          (proj) => {
+            const node = updateModule(proj, moduleId, {
               name: typeof args.name === 'string' ? args.name : undefined,
               parentId:
                 args.parentId === null || typeof args.parentId === 'string'
@@ -480,7 +500,16 @@ export function handleMcpRequest(
                 ? args.dependsOn.filter((x): x is string => typeof x === 'string')
                 : undefined,
               updatedBy: 'mcp-agent',
-            }),
+            });
+            if (callerConvId) {
+              const callerRec = (node.sessions || []).find((s) => s.conversationId === callerConvId);
+              if (callerRec) {
+                callerRec.syncedRev = node.rev;
+                callerRec.syncedAncestorHash = computeAncestorAndDepHash(proj, moduleId);
+              }
+            }
+            return node;
+          },
           dataDir,
         );
         return {
@@ -516,18 +545,36 @@ export function handleMcpRequest(
             ? (args.stage as ModuleStage)
             : undefined;
         const dedicated = Boolean(args.dedicatedForStage);
+        const customTitle = typeof args.title === 'string' && args.title.trim() ? args.title.trim() : '';
+        let boundStage: ModuleStage = 'Plan';
         const { project, result: updated } = mutateProject(
           workspacePath,
           (proj) => {
             const mod = proj.modules[moduleId];
             if (!mod) throw new Error(`模块不存在: ${moduleId}`);
             const useStage = stage || mod.stage;
+            boundStage = useStage;
+            if (useStage === 'Code' && (mod.status === '待设计' || mod.status === '已完成')) {
+              mod.status = '开发中';
+            }
+            if (useStage === 'Code' && !mod.git?.baseCommit) {
+              const repo = getRepoOverview(proj.workspacePath);
+              if (repo.isGitRepo && repo.headCommit) {
+                mod.git = {
+                  mode: mod.git?.mode || 'main',
+                  inheritFromParent: mod.git ? mod.git.inheritFromParent : true,
+                  ...mod.git,
+                  baseBranch: mod.git?.baseBranch || repo.currentBranch,
+                  baseCommit: repo.headCommit,
+                };
+              }
+            }
             return bindSessionToModule(
               proj,
               moduleId,
               {
                 conversationId,
-                title: typeof args.title === 'string' && args.title.trim() ? args.title.trim() : mod.name,
+                title: customTitle || `[${useStage}] ${mod.name}`,
                 stage: useStage,
                 syncedRev: mod.rev,
                 syncedAncestorHash: computeAncestorAndDepHash(proj, moduleId),
@@ -535,18 +582,24 @@ export function handleMcpRequest(
                 syncedReviewNotesHash: computeReviewNotesHash(mod),
               },
               {
-                setAsPrimary: !dedicated,
+                setAsPrimary: !dedicated || !mod.activeSessionId,
                 bindStage: dedicated ? useStage : undefined,
               },
             );
           },
           dataDir,
         );
+        const gitRt = getModuleGitRuntime(project, updated.id);
+        const coldContext = buildColdStartPrompt(project, updated.id, {
+          stage: boundStage,
+          sessionTitle: customTitle || undefined,
+          mergeBase: gitRt.mergeBase,
+        });
         return {
           jsonrpc: '2.0',
           id,
           result: okText(
-            `已将会话 ${conversationId} 绑定到模块「${getModulePathString(project, updated.id)}」(${updated.id})。`,
+            `已将会话 ${conversationId} 绑定到模块「${getModulePathString(project, updated.id)}」(${updated.id})（阶段：${boundStage}）。\n\n以下是本模块完整冷启动上下文与阶段规则，请立即据此开展工作：\n\n${coldContext}`,
           ),
         };
       }

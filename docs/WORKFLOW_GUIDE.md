@@ -93,3 +93,18 @@
 - **里程碑收口软引导**：在 `Code` 阶段准备将模块推到 `待检查` 前，建议按 `verification-loop` 跑 6 步验证闭环（构建/类型检查/Lint/测试/安全扫描/Diff 复核），再回写进度或进 `Review`。
 - **C++ / ESP32 自动嗅探**：仅当仓库根目录或模块关联文件检测到 `CMakeLists.txt`、`platformio.ini`、`sdkconfig`、`.cpp`/`.hpp` 或固件模块标识时，才会在 `Code`/`Review` 阶段附加 `cpp-coding-standards` 与 `cpp-testing`，对普通项目完全零干扰。
 - **主控与跨阶段兜底**：部署发布用 `deployment-patterns`；连续报错陷入循环用 `agent-introspection-debugging`；长会话过阶段节点先回写进度再用 `strategic-compact` 建议 `/compact` 或开新阶段会话。
+
+---
+
+## 场景 7：原生交互会话（支持 `/grill-me` 弹窗与终端审批）与多阶段并行不打断
+
+1. **为什么推荐「复制开场指令（推荐）」+ 左上角原生 `+` 新建？**
+   - Antigravity 宿主将 Sidecar 后台调 `agentapi new-conversation` 创建的会话视作非交互会话，会自动取消 `ask_question`（`/grill-me`）和需要审批的终端弹窗；
+   - 点击侧栏 **「复制开场指令（推荐）」**（可填自定义主题，`Plan` 阶段默认勾选附带 `ask_question` 访谈）→ 点左上角原生 **`+` 新建会话** → 粘贴发送：首轮即可完成自绑定、自动命名、返回完整 4 层上下文与阶段技能，并 100% 保留原生弹窗能力。
+   - 若你已在某个原生会话里聊上了，点侧栏 **「绑定当前会话」**（可选自定义主题），下一轮发消息时 `PreInvocation` 会自动静默补注完整模块上下文。
+2. **编码中途想看 `Plan` 记录，或 `Code` 写完想回 `Plan` 改方案**：
+   - 查看其他阶段聊天请直接点会话区上方的 **各阶段直达条（`Plan ↗` / `Code ↗` / `Review ↗`）**，**绝不修改模块阶段**；
+   - 多阶段分会话协作时，每个绑定会话遵循自身阶段门禁（`Plan`/`Review` 恒只读，`Code` 恒可写），即使误点顶部阶段切换也会在 `Code` 运行中弹窗拦截；
+   - `Plan` 改完方案调用 `modtree_update_module` 更新 `design`（`rev+1`）后，回原 `Code` 会话发下一句话即通过 `PreInvocation` 自动收到最新 `design` + `stop/next`；若大改重来，则直接复制新 `Code` 开场指令开干净会话。
+3. **升级插件后的刷新提醒**：
+   - 每次运行 `scripts/install.ps1` 升级后，建议在 Antigravity 插件管理页开关一次 `modtree`（或重载窗口），避免旧缓存的 MCP 工具 Schema 过滤掉新版参数（如 `slug`）。

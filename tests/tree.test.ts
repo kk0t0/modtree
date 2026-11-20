@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { createEmptyProject } from '../src/core/store.js';
 import {
+  bindSessionToModule,
   computeChildProgress,
   createModule,
   resolveEffectiveGit,
+  resolveSessionEffectiveStage,
   setModuleStage,
   updateModule,
   updateModuleProgress,
@@ -102,5 +104,65 @@ describe('module tree core invariants', () => {
     setModuleStage(project, child.id, 'Code');
     expect(child.status).toBe('开发中');
     expect(child.git?.mergedCommit).toBe('deadbeef1234567');
+  });
+
+  it('isolates per-stage session permissions on multi-stage modules while preserving single-session upgrades', () => {
+    const project = createEmptyProject('/tmp/demo-proj');
+    const single = createModule(project, { name: '单会话模块', stage: 'Plan' });
+    bindSessionToModule(project, single.id, {
+      conversationId: '11111111-1111-1111-1111-111111111111',
+      title: '[Plan] 单会话模块',
+      stage: 'Plan',
+      syncedRev: 1,
+      syncedAncestorHash: 'h',
+      syncedStage: 'Plan',
+      syncedReviewNotesHash: 'r',
+    });
+    expect(resolveSessionEffectiveStage(single, single.sessions![0])).toBe('Plan');
+    setModuleStage(project, single.id, 'Code');
+    expect(resolveSessionEffectiveStage(single, single.sessions![0])).toBe('Code');
+
+    // Multi-stage module with dedicated Plan and Code sessions
+    const multi = createModule(project, { name: '多会话模块', stage: 'Code' });
+    bindSessionToModule(
+      project,
+      multi.id,
+      {
+        conversationId: '22222222-2222-2222-2222-222222222222',
+        title: '[Plan] 多会话模块',
+        stage: 'Plan',
+        syncedRev: 1,
+        syncedAncestorHash: 'h',
+        syncedStage: 'Plan',
+        syncedReviewNotesHash: 'r',
+      },
+      { bindStage: 'Plan', setAsPrimary: true },
+    );
+    bindSessionToModule(
+      project,
+      multi.id,
+      {
+        conversationId: '33333333-3333-3333-3333-333333333333',
+        title: '[Code] 多会话模块',
+        stage: 'Code',
+        syncedRev: 1,
+        syncedAncestorHash: 'h',
+        syncedStage: 'Code',
+        syncedReviewNotesHash: 'r',
+      },
+      { bindStage: 'Code', setAsPrimary: false },
+    );
+    const planRec = multi.sessions!.find((s) => s.stage === 'Plan');
+    const codeRec = multi.sessions!.find((s) => s.stage === 'Code');
+
+    // Switching module stage back to Plan does NOT downgrade the Code session
+    setModuleStage(project, multi.id, 'Plan');
+    expect(resolveSessionEffectiveStage(multi, codeRec)).toBe('Code');
+    expect(resolveSessionEffectiveStage(multi, planRec)).toBe('Plan');
+
+    // Switching module stage to Code does NOT accidentally unlock writes on the Plan session
+    setModuleStage(project, multi.id, 'Code');
+    expect(resolveSessionEffectiveStage(multi, planRec)).toBe('Plan');
+    expect(resolveSessionEffectiveStage(multi, codeRec)).toBe('Code');
   });
 });

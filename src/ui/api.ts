@@ -49,6 +49,30 @@ export function openWorkspaceFile(workspacePath: string, relPath: string): boole
   return true;
 }
 
+export async function copyTextToClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Fall through to legacy textarea copy (common in cross-origin iframes)
+  }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0;';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
 function getFetcher(): typeof fetch {
   return window.sidecar?.fetch ? window.sidecar.fetch.bind(window.sidecar) : fetch;
 }

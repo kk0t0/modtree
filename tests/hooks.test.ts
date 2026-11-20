@@ -247,4 +247,117 @@ describe('PreToolUse & PreInvocation hooks', () => {
     const second = evaluatePreInvocation({ conversationId: convId }, dataDir);
     expect(second).toEqual({});
   });
+
+  it('keeps dedicated Code session writable and undisturbed when user switches module stage to Plan, while Plan session stays read-only', () => {
+    const planConv = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+    const codeConv = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+    let modId = '';
+    mutateProject(
+      repoDir,
+      (proj) => {
+        const m = createModule(proj, { name: '并行模块', design: '初版设计', stage: 'Code' });
+        modId = m.id;
+        bindSessionToModule(
+          proj,
+          m.id,
+          {
+            conversationId: planConv,
+            title: '[Plan] 并行模块',
+            stage: 'Plan',
+            syncedRev: m.rev,
+            syncedAncestorHash: computeAncestorAndDepHash(proj, m.id),
+            syncedStage: 'Plan',
+            syncedReviewNotesHash: computeReviewNotesHash(m),
+          },
+          { bindStage: 'Plan', setAsPrimary: true },
+        );
+        bindSessionToModule(
+          proj,
+          m.id,
+          {
+            conversationId: codeConv,
+            title: '[Code] 并行模块',
+            stage: 'Code',
+            syncedRev: m.rev,
+            syncedAncestorHash: computeAncestorAndDepHash(proj, m.id),
+            syncedStage: 'Code',
+            syncedReviewNotesHash: computeReviewNotesHash(m),
+          },
+          { bindStage: 'Code', setAsPrimary: false },
+        );
+      },
+      dataDir,
+    );
+
+    // User clicks Plan in sidebar while Code session is active
+    mutateProject(
+      repoDir,
+      (proj) => {
+        setModuleStage(proj, modId, 'Plan');
+      },
+      dataDir,
+    );
+
+    // Code session MUST still be allowed to write files and NOT receive false "switched to Plan" drift
+    const codeWrite = evaluatePreToolUse(
+      {
+        conversationId: codeConv,
+        toolCall: { name: 'write_file', args: { Path: join(repoDir, 'src/feature.ts') } },
+      },
+      dataDir,
+    );
+    expect(codeWrite.decision).toBe('allow');
+    expect(evaluatePreInvocation({ conversationId: codeConv }, dataDir)).toEqual({});
+
+    // Plan session MUST stay read-only even when module stage is Code
+    mutateProject(
+      repoDir,
+      (proj) => {
+        setModuleStage(proj, modId, 'Code');
+      },
+      dataDir,
+    );
+    const planWrite = evaluatePreToolUse(
+      {
+        conversationId: planConv,
+        toolCall: { name: 'write_file', args: { Path: join(repoDir, 'src/feature.ts') } },
+      },
+      dataDir,
+    );
+    expect(planWrite.decision).toBe('deny');
+  });
+
+  it('injects full cold-start context on first turn for a freshly bound native session (syncedRev=0)', () => {
+    const nativeConv = '12345678-1234-1234-1234-1234567890ab';
+    mutateProject(
+      repoDir,
+      (proj) => {
+        const m = createModule(proj, { name: '原生绑定测试', design: '使用原生 grill-me', stage: 'Plan' });
+        bindSessionToModule(
+          proj,
+          m.id,
+          {
+            conversationId: nativeConv,
+            title: '[Plan] 原生绑定测试',
+            stage: 'Plan',
+            syncedRev: 0,
+            syncedAncestorHash: '',
+            syncedStage: undefined,
+            syncedReviewNotesHash: '',
+          },
+          { bindStage: 'Plan', setAsPrimary: true },
+        );
+      },
+      dataDir,
+    );
+
+    const first = evaluatePreInvocation({ conversationId: nativeConv }, dataDir);
+    expect(first.injectSteps?.length).toBe(1);
+    expect(first.injectSteps![0].systemMessage.systemMessage).toContain('[modtree: bound');
+    expect(first.injectSteps![0].systemMessage.systemMessage).toContain('使用原生 grill-me');
+    expect(first.injectSteps![0].systemMessage.systemMessage).toContain('search-first');
+
+    // Second turn must be silent
+    expect(evaluatePreInvocation({ conversationId: nativeConv }, dataDir)).toEqual({});
+  });
 });

@@ -142,6 +142,8 @@ export interface EnrichedModuleView {
   effectiveGit: EffectiveGitInfo;
   gitRuntime?: ModuleGitRuntime;
   observation: TranscriptObservation;
+  stageObservations: Partial<Record<ModuleStage, TranscriptObservation>>;
+  codeSessionRunning: boolean;
   drift: DriftSummary;
   childProgress: ChildProgressSummary;
   stageSessionMap: Record<ModuleStage, { conversationId: string; dedicated: boolean }>;

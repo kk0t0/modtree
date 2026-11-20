@@ -24,7 +24,12 @@ interface NodeDetailProps {
   onUpdateModule: (patch: { name?: string; design?: string }) => Promise<void>;
   onSaveProgress: (patch: { stop?: string; next?: string; clearReviewNotes?: boolean }) => Promise<void>;
   onArchive: () => Promise<void>;
-  onBindCurrent: (dedicatedForStage: boolean) => Promise<void>;
+  onBindCurrent: (dedicatedForStage: boolean, title?: string) => Promise<void>;
+  onCopyBootstrapPrompt: (
+    stage: ModuleStage,
+    sessionTitle?: string,
+    grillMe?: boolean,
+  ) => Promise<{ prompt: string; copied: boolean }>;
   onCreateSession: (stage: ModuleStage, dedicatedForStage: boolean, sessionTitle?: string) => Promise<void>;
   onUnbindSession: (conversationId?: string) => Promise<void>;
   onPushContext: () => Promise<void>;
@@ -49,6 +54,7 @@ export function NodeDetail({
   onSaveProgress,
   onArchive,
   onBindCurrent,
+  onCopyBootstrapPrompt,
   onCreateSession,
   onUnbindSession,
   onPushContext,
@@ -57,7 +63,16 @@ export function NodeDetail({
   onOpenMerge,
   onOpenCleanup,
 }: NodeDetailProps) {
-  const { node, effectiveGit, gitRuntime, observation, drift, stageSessionMap } = view;
+  const {
+    node,
+    effectiveGit,
+    gitRuntime,
+    observation,
+    stageObservations,
+    codeSessionRunning,
+    drift,
+    stageSessionMap,
+  } = view;
   const [designExpanded, setDesignExpanded] = useState(false);
   const [editingDesign, setEditingDesign] = useState(false);
   const [designDraft, setDesignDraft] = useState(node.design || '');
@@ -66,11 +81,15 @@ export function NodeDetail({
   const [nextDraft, setNextDraft] = useState(node.next || '');
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState(node.name);
-  const [creatingNamedSession, setCreatingNamedSession] = useState<{
-    stage: ModuleStage;
-    dedicated: boolean;
-  } | null>(null);
+  const [sessionPanel, setSessionPanel] = useState<
+    | { mode: 'bootstrap'; stage: ModuleStage }
+    | { mode: 'bind'; stage: ModuleStage }
+    | { mode: 'bg-create'; stage: ModuleStage; dedicated: boolean }
+    | null
+  >(null);
   const [sessionTitleDraft, setSessionTitleDraft] = useState('');
+  const [grillMeChecked, setGrillMeChecked] = useState(true);
+  const [copiedPreview, setCopiedPreview] = useState('');
   const [busyAction, setBusyAction] = useState<string | null>(null);
 
   useEffect(() => {
@@ -78,8 +97,10 @@ export function NodeDetail({
     setEditingDesign(false);
     setEditingProgress(false);
     setRenaming(false);
-    setCreatingNamedSession(null);
+    setSessionPanel(null);
     setSessionTitleDraft('');
+    setGrillMeChecked(true);
+    setCopiedPreview('');
     setDesignDraft(node.design || '');
     setStopDraft(node.stop || '');
     setNextDraft(node.next || '');
@@ -207,27 +228,33 @@ export function NodeDetail({
         </div>
       </div>
 
-      {/* Plan / Code / Review stage tabs */}
+      {/* Plan / Code / Review stage switcher (explicitly decoupled from jumping chats) */}
+      <div className="mt-label-row" style={{ marginBottom: 4 }}>
+        <span className="mt-muted" style={{ fontSize: 11 }}>
+          当前工作阶段（不跳转聊天；看各阶段会话请点下方直达条）
+        </span>
+        {codeSessionRunning && (
+          <span className="mt-pill ok" title="当前模块有 Code 会话正在运行中">
+            Code 运行中
+          </span>
+        )}
+      </div>
       <div className="mt-stages" role="group" aria-label="工作阶段">
-        {MODULE_STAGES.map((st) => {
-          const dedicated = stageSessionMap[st]?.dedicated;
-          return (
-            <button
-              key={st}
-              type="button"
-              aria-pressed={node.stage === st}
-              disabled={busyAction !== null}
-              onClick={() => void runBusy(`stage-${st}`, () => onSetStage(st))}
-              title={dedicated ? `${st} 绑定了独立会话，点击切换并定位` : `切换到 ${st} 阶段`}
-            >
-              <span>{st}</span>
-              {dedicated && <span aria-label="独立会话">↗</span>}
-            </button>
-          );
-        })}
+        {MODULE_STAGES.map((st) => (
+          <button
+            key={st}
+            type="button"
+            aria-pressed={node.stage === st}
+            disabled={busyAction !== null}
+            onClick={() => void runBusy(`stage-${st}`, () => onSetStage(st))}
+            title={`将模块默认工作阶段切换为 ${st}`}
+          >
+            <span>{st}</span>
+          </button>
+        ))}
       </div>
 
-      {/* Stage gate bar + Review dedicated session shortcut */}
+      {/* Stage gate bar + Review bootstrap shortcut */}
       <div className="mt-gate-bar">
         <span>{gateHint}</span>
         {node.stage === 'Review' && !hasReviewDedicated && (
@@ -235,10 +262,14 @@ export function NodeDetail({
             type="button"
             className="mt-ghost"
             disabled={busyAction !== null}
-            onClick={() => void runBusy('new-review', () => onCreateSession('Review', true))}
-            title="开启不带写代码过程的干净审查会话"
+            onClick={() => {
+              setSessionPanel({ mode: 'bootstrap', stage: 'Review' });
+              setSessionTitleDraft('合并前独立终审');
+              setCopiedPreview('');
+            }}
+            title="复制 Review 开场指令，到左上角原生新建干净审查会话"
           >
-            {busyAction === 'new-review' ? '创建中…' : '开独立审查会话'}
+            复制独立审查指令
           </button>
         )}
       </div>
@@ -606,7 +637,7 @@ export function NodeDetail({
       {/* Session section */}
       <div className="mt-field">
         <div className="mt-label-row">
-          <span className="mt-label">绑定会话（{node.stage}）</span>
+          <span className="mt-label">会话与绑定（当前阶段：{node.stage}）</span>
           <span className="mt-muted">
             {observation.state === 'running'
               ? '运行中…'
@@ -615,6 +646,45 @@ export function NodeDetail({
                 : '未绑定'}
           </span>
         </div>
+
+        {/* Dedicated per-stage quick-jump bar (jumps directly without mutating mod.stage) */}
+        {(() => {
+          const activeSessions = (node.sessions || []).filter((s) => !s.archived);
+          const stageBindings = MODULE_STAGES.map((st) => {
+            const pinned = node.stageSessions?.[st];
+            const matched = activeSessions.find((s) => s.stage === st)?.conversationId;
+            const cid = pinned || matched || '';
+            return { stage: st, cid, obs: stageObservations?.[st] };
+          }).filter((item) => Boolean(item.cid));
+          if (stageBindings.length === 0) return null;
+          return (
+            <div className="mt-chips" style={{ marginBottom: 8 }}>
+              {stageBindings.map(({ stage: st, cid, obs }) => {
+                const isRunning = obs?.state === 'running';
+                const isHere = cid === hostConvId;
+                return (
+                  <button
+                    key={st}
+                    type="button"
+                    className="mt-chip"
+                    style={
+                      isRunning
+                        ? { borderColor: 'var(--mt-ok-fg)', color: 'var(--mt-ok-fg)' }
+                        : isHere
+                          ? { borderColor: 'var(--mt-accent)' }
+                          : undefined
+                    }
+                    onClick={() => openNativeConversation(cid)}
+                    title={`直达 ${st} 会话（${shortId(cid)}），不修改模块当前阶段`}
+                  >
+                    {st}
+                    {isRunning ? ' ●运行中' : isHere ? ' ·当前' : ''} ↗
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })()}
 
         <div className="mt-row" style={{ marginBottom: 6 }}>
           <code>{shortId(currentStageSession)}</code>
@@ -630,25 +700,27 @@ export function NodeDetail({
         )}
 
         <div className="mt-row">
-          {currentStageSession ? (
+          <button
+            type="button"
+            className="mt-primary"
+            disabled={busyAction !== null}
+            onClick={() => {
+              setSessionPanel({ mode: 'bootstrap', stage: node.stage });
+              setSessionTitleDraft('');
+              setGrillMeChecked(node.stage === 'Plan');
+              setCopiedPreview('');
+            }}
+            title="推荐：复制开场指令，点左上角「+」新建原生交互会话后粘贴发送（支持 /grill-me 弹窗与终端审批）"
+          >
+            复制开场指令（推荐）
+          </button>
+
+          {currentStageSession && (
             <button
               type="button"
-              className="mt-primary"
               onClick={() => openNativeConversation(currentStageSession)}
             >
-              定位会话
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="mt-primary"
-              disabled={busyAction !== null}
-              onClick={() => {
-                setCreatingNamedSession({ stage: node.stage, dedicated: false });
-                setSessionTitleDraft('');
-              }}
-            >
-              开启会话
+              定位当前阶段会话 ↗
             </button>
           )}
 
@@ -656,25 +728,34 @@ export function NodeDetail({
             <button
               type="button"
               disabled={busyAction !== null}
-              onClick={() => void runBusy('bind-cur', () => onBindCurrent(false))}
+              onClick={() => {
+                setSessionPanel({ mode: 'bind', stage: node.stage });
+                setSessionTitleDraft('');
+                setCopiedPreview('');
+              }}
+              title="将当前正在聊天的原生会话绑定到本模块当前阶段，下轮自动注入完整上下文"
             >
               绑定当前会话
             </button>
           )}
 
-          {currentStageSession && (
-            <button
-              type="button"
-              disabled={busyAction !== null}
-              onClick={() => {
-                setCreatingNamedSession({ stage: node.stage, dedicated: true });
-                setSessionTitleDraft('');
-              }}
-              title="为当前模块新开一条命名改动会话（不改树结构，旧会话保留在历史列表）"
-            >
-              新开改动会话
-            </button>
-          )}
+          <button
+            type="button"
+            className="mt-ghost"
+            disabled={busyAction !== null}
+            onClick={() => {
+              setSessionPanel({
+                mode: 'bg-create',
+                stage: node.stage,
+                dedicated: Boolean(currentStageSession),
+              });
+              setSessionTitleDraft('');
+              setCopiedPreview('');
+            }}
+            title="后台直建（受宿主限制为非交互模式，无法弹出 /grill-me 或终端审批弹窗）"
+          >
+            后台新建（非交互）
+          </button>
 
           {currentStageSession && (
             <button
@@ -688,12 +769,134 @@ export function NodeDetail({
           )}
         </div>
 
-        {creatingNamedSession && (
+        {sessionPanel?.mode === 'bootstrap' && (
           <div className="mt-inline-create" style={{ marginTop: 8 }}>
             <div className="mt-label">
-              {creatingNamedSession.dedicated
-                ? `为「${node.name}」(${creatingNamedSession.stage}) 新开改动会话`
-                : `为「${node.name}」(${creatingNamedSession.stage}) 开启主会话`}
+              复制「{node.name}」({sessionPanel.stage}) 原生开场指令
+            </div>
+            <div className="mt-muted" style={{ fontSize: 11.5 }}>
+              复制后点左上角 <b>「+ 新建会话」</b> 粘贴发送，将自动自绑定、命名并带入完整上下文（完整支持 /grill-me 弹窗与终端审批）。
+            </div>
+            <input
+              className="mt-input"
+              placeholder="自定义会话主题（可选，如：首版设计、修中文乱码）"
+              value={sessionTitleDraft}
+              autoFocus
+              disabled={busyAction !== null}
+              onChange={(e) => setSessionTitleDraft(e.target.value)}
+            />
+            {sessionPanel.stage === 'Plan' && (
+              <label className="mt-row" style={{ fontSize: 12, cursor: 'pointer', gap: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={grillMeChecked}
+                  onChange={(e) => setGrillMeChecked(e.target.checked)}
+                />
+                <span>附带 Grill-me 交互式访谈（原生 ask_question 逐题对齐）</span>
+              </label>
+            )}
+            <div className="mt-row">
+              <button
+                type="button"
+                className="mt-primary"
+                disabled={busyAction !== null}
+                onClick={() =>
+                  void runBusy('copy-bootstrap', async () => {
+                    const res = await onCopyBootstrapPrompt(
+                      sessionPanel.stage,
+                      sessionTitleDraft.trim() || undefined,
+                      sessionPanel.stage === 'Plan' ? grillMeChecked : false,
+                    );
+                    if (res.prompt) setCopiedPreview(res.prompt);
+                  })
+                }
+              >
+                {busyAction === 'copy-bootstrap' ? '生成中…' : '复制开场指令'}
+              </button>
+              <button
+                type="button"
+                className="mt-ghost"
+                disabled={busyAction !== null}
+                onClick={() => {
+                  setSessionPanel(null);
+                  setCopiedPreview('');
+                }}
+              >
+                收起
+              </button>
+            </div>
+            {copiedPreview && (
+              <textarea
+                className="mt-textarea"
+                readOnly
+                rows={4}
+                value={copiedPreview}
+                onFocus={(e) => e.currentTarget.select()}
+                style={{ fontSize: 11 }}
+              />
+            )}
+          </div>
+        )}
+
+        {sessionPanel?.mode === 'bind' && (
+          <div className="mt-inline-create" style={{ marginTop: 8 }}>
+            <div className="mt-label">
+              将当前会话（<code>{shortId(hostConvId)}</code>）绑定到「{node.name}」({sessionPanel.stage})
+            </div>
+            <input
+              className="mt-input"
+              placeholder="自定义会话主题（可选，留空默认使用模块名）"
+              value={sessionTitleDraft}
+              autoFocus
+              disabled={busyAction !== null}
+              onChange={(e) => setSessionTitleDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void runBusy('bind-cur', async () => {
+                    await onBindCurrent(true, sessionTitleDraft.trim() || undefined);
+                    setSessionPanel(null);
+                    setSessionTitleDraft('');
+                  });
+                } else if (e.key === 'Escape') {
+                  setSessionPanel(null);
+                }
+              }}
+            />
+            <div className="mt-row">
+              <button
+                type="button"
+                className="mt-primary"
+                disabled={busyAction !== null}
+                onClick={() =>
+                  void runBusy('bind-cur', async () => {
+                    await onBindCurrent(true, sessionTitleDraft.trim() || undefined);
+                    setSessionPanel(null);
+                    setSessionTitleDraft('');
+                  })
+                }
+              >
+                {busyAction === 'bind-cur' ? '绑定中…' : '确认绑定'}
+              </button>
+              <button
+                type="button"
+                className="mt-ghost"
+                disabled={busyAction !== null}
+                onClick={() => setSessionPanel(null)}
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        )}
+
+        {sessionPanel?.mode === 'bg-create' && (
+          <div className="mt-inline-create" style={{ marginTop: 8 }}>
+            <div className="mt-label">
+              后台新建「{node.name}」({sessionPanel.stage}) 会话（非交互）
+            </div>
+            <div className="mt-banner warn" style={{ padding: '6px 8px', fontSize: 11.5 }}>
+              ⚠️ 宿主限制：侧栏后台直建的会话为非交互模式，调用 /grill-me（ask_question）或需要弹窗确认的终端命令会被自动取消。建议优先使用「复制开场指令（推荐）」。
             </div>
             <input
               className="mt-input"
@@ -707,42 +910,41 @@ export function NodeDetail({
                   e.preventDefault();
                   void runBusy('create-named-sess', async () => {
                     await onCreateSession(
-                      creatingNamedSession.stage,
-                      creatingNamedSession.dedicated,
+                      sessionPanel.stage,
+                      sessionPanel.dedicated,
                       sessionTitleDraft.trim() || undefined,
                     );
-                    setCreatingNamedSession(null);
+                    setSessionPanel(null);
                     setSessionTitleDraft('');
                   });
                 } else if (e.key === 'Escape') {
-                  setCreatingNamedSession(null);
+                  setSessionPanel(null);
                 }
               }}
             />
             <div className="mt-row">
               <button
                 type="button"
-                className="mt-primary"
                 disabled={busyAction !== null}
                 onClick={() =>
                   void runBusy('create-named-sess', async () => {
                     await onCreateSession(
-                      creatingNamedSession.stage,
-                      creatingNamedSession.dedicated,
+                      sessionPanel.stage,
+                      sessionPanel.dedicated,
                       sessionTitleDraft.trim() || undefined,
                     );
-                    setCreatingNamedSession(null);
+                    setSessionPanel(null);
                     setSessionTitleDraft('');
                   })
                 }
               >
-                {busyAction === 'create-named-sess' ? '创建中…' : '创建并切换'}
+                {busyAction === 'create-named-sess' ? '创建中…' : '仍要后台创建'}
               </button>
               <button
                 type="button"
                 className="mt-ghost"
                 disabled={busyAction !== null}
-                onClick={() => setCreatingNamedSession(null)}
+                onClick={() => setSessionPanel(null)}
               >
                 取消
               </button>

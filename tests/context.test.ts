@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildBootstrapPrompt,
   buildColdStartPrompt,
   buildDriftInjectionMessage,
   computeAncestorAndDepHash,
@@ -140,5 +141,50 @@ describe('4-layer context & drift detection', () => {
     const injected = buildDriftInjectionMessage(project, child.id, rec);
     expect(injected).toContain('同时支持 CSV 与 JSON');
     expect(injected).toContain('缺少空数组校验');
+  });
+
+  it('builds native bootstrap prompt with readable title line and optional Plan Grill-me interview', () => {
+    const project = createEmptyProject('/tmp/demo-proj');
+    const mod = createModule(project, { name: '列表筛选', slug: 'filter-list', stage: 'Plan' });
+    const prompt = buildBootstrapPrompt(project, mod.id, {
+      stage: 'Plan',
+      sessionTitle: '首版交互设计',
+      grillMe: true,
+    });
+    const lines = prompt.split('\n');
+    expect(lines[0]).toBe('[Plan] 列表筛选 · 首版交互设计');
+    expect(prompt).toContain('modtree_bind_session');
+    expect(prompt).toContain('"filter-list"');
+    expect(prompt).toContain('ask_question');
+  });
+
+  it('injects full cold-start context on first turn when syncedRev is 0 and includes stop/next on subsequent rev bumps', () => {
+    const project = createEmptyProject('/tmp/demo-proj');
+    const mod = createModule(project, { name: '导出模块', design: '初版 CSV 导出', stage: 'Code' });
+    bindSessionToModule(project, mod.id, {
+      conversationId: '33333333-3333-3333-3333-333333333333',
+      title: '[Code] 导出模块',
+      stage: 'Code',
+      syncedRev: 0,
+      syncedAncestorHash: '',
+      syncedStage: undefined,
+      syncedReviewNotesHash: '',
+    });
+    const rec = mod.sessions![0];
+    const firstMsg = buildDriftInjectionMessage(project, mod.id, rec);
+    expect(firstMsg).toContain(`[modtree: bound project=${project.workspacePath} module=${mod.id} stage=Code]`);
+    expect(firstMsg).toContain('tdd-workflow');
+
+    // Simulate synced then Plan updates design + stop/next
+    rec.syncedRev = mod.rev;
+    rec.syncedAncestorHash = computeAncestorAndDepHash(project, mod.id);
+    rec.syncedStage = 'Code';
+    rec.syncedReviewNotesHash = computeReviewNotesHash(mod);
+
+    updateModule(project, mod.id, { design: '新版：增加 JSON 导出' });
+    updateModuleProgress(project, mod.id, { stop: 'Plan 已定稿', next: '实现 JSON 序列化', allowComplete: false });
+    const deltaMsg = buildDriftInjectionMessage(project, mod.id, rec);
+    expect(deltaMsg).toContain('新版：增加 JSON 导出');
+    expect(deltaMsg).toContain('实现 JSON 序列化');
   });
 });

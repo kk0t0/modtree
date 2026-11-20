@@ -9,6 +9,7 @@ import {
   mutateProject,
   resolvePluginDataDir,
 } from '../core/store.js';
+import { resolveSessionEffectiveStage } from '../core/tree.js';
 
 export interface PreInvocationInput {
   conversationId?: string;
@@ -52,6 +53,7 @@ export function evaluatePreInvocation(
   // Update synced markers so the same drift isn't injected twice
   const curAncHash = computeAncestorAndDepHash(project, moduleId);
   const curReviewHash = computeReviewNotesHash(mod);
+  const effectiveStage = resolveSessionEffectiveStage(mod, session);
   mutateProject(
     project.workspacePath,
     (proj) => {
@@ -60,7 +62,7 @@ export function evaluatePreInvocation(
       if (m && rec) {
         rec.syncedRev = m.rev;
         rec.syncedAncestorHash = curAncHash;
-        rec.syncedStage = m.stage;
+        rec.syncedStage = effectiveStage;
         rec.syncedReviewNotesHash = curReviewHash;
       }
     },

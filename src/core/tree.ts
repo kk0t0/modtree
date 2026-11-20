@@ -175,22 +175,62 @@ export function resolveEffectiveGit(project: ProjectState, moduleId: string): Ef
 }
 
 export function resolveStageSessionId(mod: ModuleNode, stage: ModuleStage = mod.stage): string {
-  return mod.stageSessions?.[stage] || mod.activeSessionId || '';
+  const pinned = mod.stageSessions?.[stage];
+  if (pinned) return pinned;
+  const stageRec = (mod.sessions || []).find((s) => !s.archived && s.stage === stage);
+  if (stageRec) return stageRec.conversationId;
+  return mod.activeSessionId || '';
 }
 
 export function buildStageSessionMap(
   mod: ModuleNode,
 ): Record<ModuleStage, { conversationId: string; dedicated: boolean }> {
   const primary = mod.activeSessionId || '';
+  const activeSessions = (mod.sessions || []).filter((s) => !s.archived);
   const map = {} as Record<ModuleStage, { conversationId: string; dedicated: boolean }>;
   for (const st of MODULE_STAGES) {
-    const cid = mod.stageSessions?.[st] || primary;
+    const pinned = mod.stageSessions?.[st];
+    const stageRec = activeSessions.find((s) => s.stage === st)?.conversationId;
+    const explicit = pinned || stageRec || '';
+    const cid = explicit || primary;
     map[st] = {
       conversationId: cid,
-      dedicated: Boolean(cid && primary && cid !== primary),
+      dedicated: Boolean(pinned || (explicit && primary && explicit !== primary)),
     };
   }
   return map;
+}
+
+/**
+ * Resolves the effective gating stage for a specific bound session.
+ * - Multi-stage modules (active sessions across >=2 stages): each session obeys its own stage
+ *   so inspecting/working in Plan/Review never interrupts a running Code session,
+ *   and Plan/Review chats never accidentally gain write permission.
+ * - Dedicated Code/Review sessions pinned in stageSessions always keep their own stage.
+ * - Single-session modules (e.g. one session upgraded Plan -> Code -> Review) continue to
+ *   follow mod.stage seamlessly.
+ */
+export function resolveSessionEffectiveStage(
+  mod: ModuleNode,
+  session: SessionRecord | undefined,
+): ModuleStage {
+  if (!session) return mod.stage;
+  const activeSessions = (mod.sessions || []).filter((s) => !s.archived);
+  const distinctStages = new Set(activeSessions.map((s) => s.stage));
+
+  if (mod.stageSessions?.Code === session.conversationId) {
+    return 'Code';
+  }
+  if (mod.stageSessions?.Review === session.conversationId) {
+    return 'Review';
+  }
+  if (mod.stageSessions?.Plan === session.conversationId && distinctStages.size > 1) {
+    return 'Plan';
+  }
+  if (distinctStages.size > 1) {
+    return session.stage;
+  }
+  return mod.stage;
 }
 
 export interface CreateModuleInput {

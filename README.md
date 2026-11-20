@@ -45,7 +45,9 @@ npm run build
 powershell -ExecutionPolicy Bypass -File scripts/install.ps1
 ```
 
-插件会复制到 `~/.gemini/config/plugins/modtree/` 并被 Antigravity 免重启自动发现。打开任意项目后，点击对话右上角 **`+` → `模块树`** 即可打开侧栏。
+插件会复制到 `~/.gemini/config/plugins/modtree/` 并被 Antigravity 自动发现。打开任意项目后，点击对话右上角 **`+` → `模块树`** 即可打开侧栏。
+
+> **升级刷新提示**：如果更新版本涉及 MCP 工具参数（如 `slug`、`modtree_bind_session`）或侧栏 UI 变更，请在 Antigravity 插件管理页**关闭再重新开启一次 `modtree`**（或重载窗口），以刷新宿主缓存的 MCP Schema 与侧栏页面。
 
 ### 卸载
 

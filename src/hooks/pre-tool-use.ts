@@ -2,7 +2,7 @@ import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { isPathInside } from '../core/git.js';
 import { lookupSessionBinding, resolvePluginDataDir } from '../core/store.js';
-import { resolveEffectiveGit } from '../core/tree.js';
+import { resolveEffectiveGit, resolveSessionEffectiveStage } from '../core/tree.js';
 
 export interface PreToolUseInput {
   conversationId?: string;
@@ -145,6 +145,8 @@ export function evaluatePreToolUse(
 
   const toolName = (input.toolCall?.name || '').toLowerCase();
   const args = input.toolCall?.args || {};
+  const session = (mod.sessions || []).find((s) => s.conversationId === convId);
+  const effectiveStage = resolveSessionEffectiveStage(mod, session);
   const effGit = resolveEffectiveGit(project, moduleId);
   const artifactDir = input.artifactDirectoryPath ? safeRealpath(input.artifactDirectoryPath) : '';
 
@@ -159,10 +161,10 @@ export function evaluatePreToolUse(
       return { decision: 'allow' };
     }
 
-    if (mod.stage === 'Plan' || mod.stage === 'Review') {
+    if (effectiveStage === 'Plan' || effectiveStage === 'Review') {
       return {
         decision: 'deny',
-        reason: `[modtree 门禁] 模块「${mod.name}」当前处于 ${mod.stage} 只读阶段，禁止修改工作区代码（${targetRaw}）。如需修改代码，请让用户在侧栏切回 Code 阶段。`,
+        reason: `[modtree 门禁] 模块「${mod.name}」当前会话处于 ${effectiveStage} 只读阶段，禁止修改工作区代码（${targetRaw}）。如需修改代码，请在 Code 阶段会话中操作或切回 Code 阶段。`,
       };
     }
 
@@ -194,7 +196,7 @@ export function evaluatePreToolUse(
       };
     }
 
-    if (mod.stage === 'Plan' || mod.stage === 'Review') {
+    if (effectiveStage === 'Plan' || effectiveStage === 'Review') {
       const isReadonly = isReadonlyCommand(cmd);
       if (isReadonly) {
         if (effGit.mode === 'worktree' && effGit.worktreePath) {
@@ -210,7 +212,7 @@ export function evaluatePreToolUse(
       }
       return {
         decision: 'force_ask',
-        reason: `[modtree 门禁] 模块「${mod.name}」当前处于 ${mod.stage} 只读阶段，非只读终端命令需要用户明确确认。`,
+        reason: `[modtree 门禁] 模块「${mod.name}」当前会话处于 ${effectiveStage} 只读阶段，非只读终端命令需要用户明确确认。`,
       };
     }
 

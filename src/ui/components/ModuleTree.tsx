@@ -200,18 +200,19 @@ export function ModuleTree({
         <div className="mt-row">
           <button
             type="button"
+            className="mt-primary"
             disabled={busy || !name.trim()}
             onClick={() => void submitCreate(false)}
           >
-            仅记入树
+            {busy ? '处理中…' : '仅记入树（推荐）'}
           </button>
           <button
             type="button"
-            className="mt-primary"
             disabled={busy || !name.trim()}
             onClick={() => void submitCreate(true)}
+            title="后台新建非交互会话（不支持 /grill-me 与终端弹窗审批）"
           >
-            {busy ? '处理中…' : '创建并开会话'}
+            创建并后台开会话
           </button>
           <button
             type="button"
