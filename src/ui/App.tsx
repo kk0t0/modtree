@@ -116,7 +116,22 @@ export function App() {
     (selectedId && snapshot?.enriched[selectedId]) ||
     (snapshot ? Object.values(snapshot.enriched)[0] : undefined);
 
+  // 4a: Clicking a node ONLY inspects details in the sidebar (never hijacks active chat).
   async function handleSelectModule(moduleId: string) {
+    if (!snapshot) return;
+    try {
+      const next = await apiPost<SidecarSnapshot>('/api/ui-prefs', {
+        workspacePath: wsParam,
+        selectedModuleId: moduleId,
+      });
+      setSnapshot(next);
+    } catch (err) {
+      notify(err instanceof Error ? err.message : String(err), true);
+    }
+  }
+
+  // Explicit jump button (↗) selects node AND switches the native conversation.
+  async function handleOpenModuleSession(moduleId: string) {
     if (!snapshot) return;
     try {
       const next = await apiPost<SidecarSnapshot>('/api/ui-prefs', {
@@ -191,6 +206,26 @@ export function App() {
         openNativeConversation(targetConv);
       }
       notify(`已切换至 ${stage} 阶段`);
+    } catch (err) {
+      notify(err instanceof Error ? err.message : String(err), true);
+    }
+  }
+
+  async function handleBackToCodeFix() {
+    if (!selectedView) return;
+    try {
+      const next = await apiPost<SidecarSnapshot>('/api/modules/stage', {
+        workspacePath: wsParam,
+        moduleId: selectedView.node.id,
+        stage: 'Code',
+      });
+      setSnapshot(next);
+      const updatedView = next.enriched[selectedView.node.id];
+      const codeConv = updatedView?.stageSessionMap.Code?.conversationId;
+      if (codeConv && codeConv !== hostConvId) {
+        openNativeConversation(codeConv);
+      }
+      notify('已切回 Code 阶段并定位会话，下一轮发消息将自动带入返工清单');
     } catch (err) {
       notify(err instanceof Error ? err.message : String(err), true);
     }
@@ -276,7 +311,11 @@ export function App() {
     }
   }
 
-  async function handleCreateSession(stage: ModuleStage, dedicatedForStage: boolean) {
+  async function handleCreateSession(
+    stage: ModuleStage,
+    dedicatedForStage: boolean,
+    sessionTitle?: string,
+  ) {
     if (!selectedView) return;
     try {
       const res = await apiPost<{ createdConversationId: string; snapshot: SidecarSnapshot }>(
@@ -286,13 +325,18 @@ export function App() {
           moduleId: selectedView.node.id,
           stage,
           dedicatedForStage,
+          sessionTitle,
         },
       );
       setSnapshot(res.snapshot);
       if (res.createdConversationId) {
         openNativeConversation(res.createdConversationId);
       }
-      notify(`已为 ${stage} 开启新会话并定位`);
+      notify(
+        sessionTitle
+          ? `已开启「${sessionTitle}」(${stage}) 会话并定位`
+          : `已为 ${stage} 开启新会话并定位`,
+      );
     } catch (err) {
       notify(err instanceof Error ? err.message : String(err), true);
     }
@@ -465,6 +509,7 @@ export function App() {
             expandedIds={snapshot.project.expandedIds || {}}
             hostConvId={hostConvId}
             onSelect={handleSelectModule}
+            onOpenSession={handleOpenModuleSession}
             onToggleExpand={handleToggleExpand}
             onCreate={handleCreateModule}
           />
@@ -479,6 +524,7 @@ export function App() {
               hostConvId={hostConvId}
               onSelectNode={handleSelectModule}
               onSetStage={handleSetStage}
+              onBackToCodeFix={handleBackToCodeFix}
               onSetStatus={handleSetStatus}
               onUpdateModule={handleUpdateModule}
               onSaveProgress={handleSaveProgress}
@@ -500,9 +546,18 @@ export function App() {
         <MergeDialog
           mode={dialogMode}
           node={selectedView.node}
+          hasReviewed={Boolean(
+            selectedView.stageSessionMap.Review?.dedicated ||
+              selectedView.node.stage === 'Review',
+          )}
           onCancel={() => setDialogMode(null)}
           onConfirmMerge={handleConfirmMerge}
           onConfirmCleanup={handleConfirmCleanup}
+          onStartIndependentReview={async () => {
+            await handleSetStage('Review');
+            await handleCreateSession('Review', true, '合并前独立终审');
+            setDialogMode(null);
+          }}
         />
       )}
 

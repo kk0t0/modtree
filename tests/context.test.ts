@@ -44,17 +44,26 @@ describe('4-layer context & drift detection', () => {
 
     const prompt = buildColdStartPrompt(project, child.id, {
       stage: 'Review',
+      sessionTitle: '合并前独立终审',
       previousReplySnippet: '已完成字段勾选 UI 与顺序绑定。',
       mergeBase: '2222222deadbeef',
     });
 
     expect(prompt).toContain(`[modtree: bound project=${project.workspacePath} module=${child.id} stage=Review]`);
+    expect(prompt).toContain('本次改动主题：合并前独立终审');
     expect(prompt).toContain('统一 CSV UTF-8 BOM 编码');
     expect(prompt).toContain('实验数据模型');
     expect(prompt).toContain(sibling.name);
     expect(prompt).toContain('git diff main...HEAD');
     expect(prompt).toContain('2222222');
     expect(prompt).toContain('已完成字段勾选 UI');
+
+    const codePrompt = buildColdStartPrompt(project, child.id, {
+      stage: 'Code',
+      sessionTitle: '修中文乱码',
+    });
+    expect(codePrompt).toContain('本次改动主题：修中文乱码');
+    expect(codePrompt).toContain('只读子代理');
   });
 
   it('detects drift when ancestor design, dependsOn design, stage, or reviewNotes changes', () => {

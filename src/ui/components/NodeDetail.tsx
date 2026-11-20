@@ -19,12 +19,13 @@ interface NodeDetailProps {
   hostConvId: string;
   onSelectNode: (moduleId: string) => void;
   onSetStage: (stage: ModuleStage) => Promise<void>;
+  onBackToCodeFix: () => Promise<void>;
   onSetStatus: (status: ModuleStatus) => Promise<void>;
   onUpdateModule: (patch: { name?: string; design?: string }) => Promise<void>;
   onSaveProgress: (patch: { stop?: string; next?: string; clearReviewNotes?: boolean }) => Promise<void>;
   onArchive: () => Promise<void>;
   onBindCurrent: (dedicatedForStage: boolean) => Promise<void>;
-  onCreateSession: (stage: ModuleStage, dedicatedForStage: boolean) => Promise<void>;
+  onCreateSession: (stage: ModuleStage, dedicatedForStage: boolean, sessionTitle?: string) => Promise<void>;
   onUnbindSession: (conversationId?: string) => Promise<void>;
   onPushContext: () => Promise<void>;
   onCreateWorktree: () => Promise<void>;
@@ -42,6 +43,7 @@ export function NodeDetail({
   hostConvId,
   onSelectNode,
   onSetStage,
+  onBackToCodeFix,
   onSetStatus,
   onUpdateModule,
   onSaveProgress,
@@ -64,6 +66,11 @@ export function NodeDetail({
   const [nextDraft, setNextDraft] = useState(node.next || '');
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState(node.name);
+  const [creatingNamedSession, setCreatingNamedSession] = useState<{
+    stage: ModuleStage;
+    dedicated: boolean;
+  } | null>(null);
+  const [sessionTitleDraft, setSessionTitleDraft] = useState('');
   const [busyAction, setBusyAction] = useState<string | null>(null);
 
   useEffect(() => {
@@ -71,6 +78,8 @@ export function NodeDetail({
     setEditingDesign(false);
     setEditingProgress(false);
     setRenaming(false);
+    setCreatingNamedSession(null);
+    setSessionTitleDraft('');
     setDesignDraft(node.design || '');
     setStopDraft(node.stop || '');
     setNextDraft(node.next || '');
@@ -123,8 +132,8 @@ export function NodeDetail({
     node.stage === 'Plan'
       ? '🔒 只读规划：禁改源码，产出沉淀至设计要点'
       : node.stage === 'Code'
-        ? `✏️ 编码模式：写入范围 ${effectiveGit.mode === 'worktree' ? effectiveGit.branch || 'Worktree' : '主目录'}`
-        : `🔍 只读审查：基线 ${gitRuntime?.mergeBase?.slice(0, 7) || effectiveGit.baseCommit?.slice(0, 7) || '未记录'}`;
+        ? `✏️ 编码模式（可开只读子代理自测）：写入范围 ${effectiveGit.mode === 'worktree' ? effectiveGit.branch || 'Worktree' : '主目录'}`
+        : `🔍 合并前独立终审（只读）：基线 ${gitRuntime?.mergeBase?.slice(0, 7) || effectiveGit.baseCommit?.slice(0, 7) || '未记录'}`;
 
   return (
     <section className="mt-card" aria-label="当前模块详情">
@@ -263,14 +272,26 @@ export function NodeDetail({
         <div className="mt-banner warn">
           <div className="mt-label-row" style={{ marginBottom: 0 }}>
             <strong>⚠️ Review 返工问题清单</strong>
-            <button
-              type="button"
-              className="mt-ghost"
-              disabled={busyAction !== null}
-              onClick={() => void runBusy('clear-rn', () => onSaveProgress({ clearReviewNotes: true }))}
-            >
-              清空
-            </button>
+            <div className="mt-row" style={{ gap: 4 }}>
+              <button
+                type="button"
+                className="mt-primary"
+                style={{ padding: '2px 7px', fontSize: 11 }}
+                disabled={busyAction !== null}
+                onClick={() => void runBusy('back-code', onBackToCodeFix)}
+                title="一步切回 Code 阶段并定位 Code 会话（下一轮自动注入返工清单）"
+              >
+                {busyAction === 'back-code' ? '切换中…' : '回 Code 修复'}
+              </button>
+              <button
+                type="button"
+                className="mt-ghost"
+                disabled={busyAction !== null}
+                onClick={() => void runBusy('clear-rn', () => onSaveProgress({ clearReviewNotes: true }))}
+              >
+                清空
+              </button>
+            </div>
           </div>
           <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{node.reviewNotes}</div>
         </div>
@@ -589,9 +610,12 @@ export function NodeDetail({
               type="button"
               className="mt-primary"
               disabled={busyAction !== null}
-              onClick={() => void runBusy('start-sess', () => onCreateSession(node.stage, false))}
+              onClick={() => {
+                setCreatingNamedSession({ stage: node.stage, dedicated: false });
+                setSessionTitleDraft('');
+              }}
             >
-              {busyAction === 'start-sess' ? '创建中…' : '开启会话'}
+              开启会话
             </button>
           )}
 
@@ -609,10 +633,13 @@ export function NodeDetail({
             <button
               type="button"
               disabled={busyAction !== null}
-              onClick={() => void runBusy('new-stage-sess', () => onCreateSession(node.stage, true))}
-              title={`为 ${node.stage} 新开独立会话（树结构不变，旧会话保留在历史列表）`}
+              onClick={() => {
+                setCreatingNamedSession({ stage: node.stage, dedicated: true });
+                setSessionTitleDraft('');
+              }}
+              title="为当前模块新开一条命名改动会话（不改树结构，旧会话保留在历史列表）"
             >
-              {busyAction === 'new-stage-sess' ? '创建中…' : `为 ${node.stage} 新开会话`}
+              新开改动会话
             </button>
           )}
 
@@ -628,20 +655,91 @@ export function NodeDetail({
           )}
         </div>
 
+        {creatingNamedSession && (
+          <div className="mt-inline-create" style={{ marginTop: 8 }}>
+            <div className="mt-label">
+              {creatingNamedSession.dedicated
+                ? `为「${node.name}」(${creatingNamedSession.stage}) 新开改动会话`
+                : `为「${node.name}」(${creatingNamedSession.stage}) 开启主会话`}
+            </div>
+            <input
+              className="mt-input"
+              placeholder="本次改动标题（可选，如：修中文乱码、加 JSON 格式）"
+              value={sessionTitleDraft}
+              autoFocus
+              disabled={busyAction !== null}
+              onChange={(e) => setSessionTitleDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void runBusy('create-named-sess', async () => {
+                    await onCreateSession(
+                      creatingNamedSession.stage,
+                      creatingNamedSession.dedicated,
+                      sessionTitleDraft.trim() || undefined,
+                    );
+                    setCreatingNamedSession(null);
+                    setSessionTitleDraft('');
+                  });
+                } else if (e.key === 'Escape') {
+                  setCreatingNamedSession(null);
+                }
+              }}
+            />
+            <div className="mt-row">
+              <button
+                type="button"
+                className="mt-primary"
+                disabled={busyAction !== null}
+                onClick={() =>
+                  void runBusy('create-named-sess', async () => {
+                    await onCreateSession(
+                      creatingNamedSession.stage,
+                      creatingNamedSession.dedicated,
+                      sessionTitleDraft.trim() || undefined,
+                    );
+                    setCreatingNamedSession(null);
+                    setSessionTitleDraft('');
+                  })
+                }
+              >
+                {busyAction === 'create-named-sess' ? '创建中…' : '创建并切换'}
+              </button>
+              <button
+                type="button"
+                className="mt-ghost"
+                disabled={busyAction !== null}
+                onClick={() => setCreatingNamedSession(null)}
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        )}
+
         {node.sessions && node.sessions.length > 1 && (
           <details style={{ marginTop: 8 }}>
             <summary className="mt-muted" style={{ cursor: 'pointer' }}>
-              历史会话（{node.sessions.length}）
+              历史会话 / 过往改动（{node.sessions.length}）
             </summary>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 6 }}>
               {node.sessions.map((s) => (
-                <div key={s.conversationId} className="mt-row" style={{ justifyContent: 'space-between' }}>
-                  <span className="mt-muted">
-                    [{s.stage}] <code>{shortId(s.conversationId)}</code>
+                <div
+                  key={s.conversationId}
+                  className="mt-row"
+                  style={{ justifyContent: 'space-between', flexWrap: 'nowrap' }}
+                >
+                  <span
+                    className="mt-muted"
+                    style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                    title={`${s.title} (${s.conversationId})`}
+                  >
+                    [{s.stage}] {s.title || shortId(s.conversationId)}
                   </span>
                   <button
                     type="button"
                     className="mt-ghost"
+                    style={{ flexShrink: 0 }}
                     onClick={() => openNativeConversation(s.conversationId)}
                   >
                     打开

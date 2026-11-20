@@ -2,7 +2,7 @@
 
 面向 **Antigravity 2.0** 的 **Agent 自主驱动模块树开发工作台插件**：通过 Aux Pane 常驻侧栏、原生会话切换、MCP 进度回写、`Plan / Code / Review` 生命周期门禁与按需 Git Worktree 隔离，按长期存在的功能模块树组织软件开发。
 
-完整产品与技术规格（含从 0 开始操作手册）见：[docs/SPEC_V01.md](docs/SPEC_V01.md)。
+完整产品与技术规格见：[docs/SPEC_V01.md](docs/SPEC_V01.md)；实战操作流程与避坑指南见：[docs/WORKFLOW_GUIDE.md](docs/WORKFLOW_GUIDE.md)。
 
 ## 核心特性
 

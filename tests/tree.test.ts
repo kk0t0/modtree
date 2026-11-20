@@ -90,5 +90,17 @@ describe('module tree core invariants', () => {
     setModuleStage(project, child.id, 'Code');
     expect(child.stage).toBe('Code');
     expect(child.status).toBe('开发中');
+
+    // Reopening a completed module into Code flips status back to 开发中 while keeping mergedCommit
+    child.git = {
+      mode: 'main',
+      inheritFromParent: true,
+      mergedCommit: 'deadbeef1234567',
+    };
+    updateModuleProgress(project, child.id, { status: '已完成', allowComplete: true });
+    expect(child.status).toBe('已完成');
+    setModuleStage(project, child.id, 'Code');
+    expect(child.status).toBe('开发中');
+    expect(child.git?.mergedCommit).toBe('deadbeef1234567');
   });
 });

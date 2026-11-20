@@ -398,7 +398,7 @@ export function setModuleStage(
     throw new Error(`非法阶段: ${stage}`);
   }
   mod.stage = stage;
-  if (stage === 'Code' && mod.status === '待设计') {
+  if (stage === 'Code' && (mod.status === '待设计' || mod.status === '已完成')) {
     mod.status = '开发中';
   }
   mod.updatedAt = new Date().toISOString();

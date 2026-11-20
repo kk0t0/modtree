@@ -51,7 +51,7 @@ import {
 } from '../core/types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const UI_VERSION = '0.1.0';
+const UI_VERSION = '0.1.3';
 const ID_RE = /^[0-9a-f-]{8,}$/i;
 
 const MIME_BY_EXT: Record<string, string> = {
@@ -199,6 +199,7 @@ function createAndBindConversation(
   opts: {
     stage?: ModuleStage;
     dedicatedForStage?: boolean;
+    sessionTitle?: string;
     currentConversationId?: string;
     model?: string;
     userNote?: string;
@@ -211,19 +212,21 @@ function createAndBindConversation(
   if (!mod) throw new Error(`模块不存在: ${moduleId}`);
 
   const stage = opts.stage || mod.stage;
+  const customTitle = opts.sessionTitle?.trim() || '';
   const prevConvId = resolveStageSessionId(mod, mod.stage);
   const prevObs = prevConvId ? observeTranscript(prevConvId, appDataDir) : undefined;
   const gitRt = getModuleGitRuntime(projBefore, moduleId);
 
   const prompt = buildColdStartPrompt(projBefore, moduleId, {
     stage,
+    sessionTitle: customTitle || undefined,
     previousReplySnippet: prevObs?.latestReply || undefined,
     userNote: opts.userNote,
     mergeBase: gitRt.mergeBase,
   });
 
   const pathStr = getModulePathString(projBefore, moduleId);
-  const title = `[${stage}] ${pathStr}`;
+  const title = customTitle ? `[${stage}] ${mod.name} · ${customTitle}` : `[${stage}] ${pathStr}`;
   const model = opts.model || 'flash';
   const projectId = resolveProjectId(opts.currentConversationId);
 
@@ -241,6 +244,9 @@ function createAndBindConversation(
     (proj) => {
       const m = proj.modules[moduleId];
       if (!m) return;
+      if (stage === 'Code' && (m.status === '待设计' || m.status === '已完成')) {
+        m.status = '开发中';
+      }
       if (stage === 'Code' && !m.git?.baseCommit) {
         const repo = getRepoOverview(proj.workspacePath);
         if (repo.isGitRepo && repo.headCommit) {
@@ -258,7 +264,7 @@ function createAndBindConversation(
         moduleId,
         {
           conversationId: newConvId,
-          title,
+          title: customTitle || title,
           stage,
           syncedRev: m.rev,
           syncedAncestorHash: computeAncestorAndDepHash(proj, moduleId),
@@ -490,6 +496,7 @@ app.api('/api/sessions/create', (data) => {
   return createAndBindConversation(ws, moduleId, {
     stage,
     dedicatedForStage: Boolean(data.dedicatedForStage),
+    sessionTitle: typeof data.sessionTitle === 'string' ? data.sessionTitle : undefined,
     currentConversationId:
       typeof data.currentConversationId === 'string' ? data.currentConversationId : undefined,
     model: typeof data.model === 'string' ? data.model : 'flash',

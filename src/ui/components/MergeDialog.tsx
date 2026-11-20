@@ -4,17 +4,21 @@ import type { ModuleNode } from '../../core/types.js';
 interface MergeDialogProps {
   mode: 'merge' | 'cleanup';
   node: ModuleNode;
+  hasReviewed: boolean;
   onCancel: () => void;
   onConfirmMerge: (strategy: 'squash' | 'no-ff', commitMessage: string) => Promise<void>;
   onConfirmCleanup: () => Promise<void>;
+  onStartIndependentReview: () => Promise<void>;
 }
 
 export function MergeDialog({
   mode,
   node,
+  hasReviewed,
   onCancel,
   onConfirmMerge,
   onConfirmCleanup,
+  onStartIndependentReview,
 }: MergeDialogProps) {
   const [strategy, setStrategy] = useState<'squash' | 'no-ff'>('squash');
   const [commitMessage, setCommitMessage] = useState(`feat(${node.id}): ${node.name}`);
@@ -66,6 +70,28 @@ export function MergeDialog({
           将分支 <code>{node.git?.branch}</code> 合并到 <code>{node.git?.baseBranch || 'main'}</code>
           。若遇冲突会自动中止回滚，绝不强行覆盖。
         </div>
+
+        {!hasReviewed && (
+          <div className="mt-banner warn" style={{ marginBottom: 0 }}>
+            <div>提示：该模块尚未做独立 Review，可直接确认合并，或先开一次独立审查会话把关。</div>
+            <div className="mt-row">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  try {
+                    await onStartIndependentReview();
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                {busy ? '创建中…' : '先开独立审查会话'}
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="mt-field">
           <div className="mt-label">合并方式</div>

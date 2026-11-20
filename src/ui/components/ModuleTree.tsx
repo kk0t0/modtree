@@ -8,6 +8,7 @@ interface ModuleTreeProps {
   expandedIds: Record<string, boolean>;
   hostConvId: string;
   onSelect: (moduleId: string) => void;
+  onOpenSession: (moduleId: string) => void;
   onToggleExpand: (moduleId: string, nextExpanded: boolean) => void;
   onCreate: (parentId: string | null, name: string, design: string, openSession: boolean) => Promise<void>;
 }
@@ -24,6 +25,7 @@ export function ModuleTree({
   expandedIds,
   hostConvId,
   onSelect,
+  onOpenSession,
   onToggleExpand,
   onCreate,
 }: ModuleTreeProps) {
@@ -99,7 +101,7 @@ export function ModuleTree({
             type="button"
             className="mt-node-main"
             onClick={() => onSelect(node.id)}
-            title="点击选中并定位原生会话（不自动发送）"
+            title="单击查看详情（不切换当前聊天）"
           >
             <span className="mt-node-name-line">
               <span className={`mt-dot ${dotClass}`} title={dotTitle} />
@@ -126,6 +128,20 @@ export function ModuleTree({
               {isHere && <span className="mt-pill ok">当前</span>}
             </span>
           </button>
+
+          {stageSessionId && !isHere && (
+            <button
+              type="button"
+              className="mt-node-add-btn"
+              title={`切换到「${node.name}」的绑定会话`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenSession(node.id);
+              }}
+            >
+              ↗
+            </button>
+          )}
 
           <button
             type="button"
