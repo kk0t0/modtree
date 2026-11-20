@@ -34,7 +34,7 @@ describe('MCP stdio server contract', () => {
         method: 'tools/call',
         params: {
           name: 'modtree_create_module',
-          arguments: { workspacePath: wsA, name: '字段选择', design: '保留顺序' },
+          arguments: { workspacePath: wsA, name: '字段选择', slug: 'field-picker', design: '保留顺序' },
         },
       },
       dataDir,
@@ -42,6 +42,21 @@ describe('MCP stdio server contract', () => {
     const createdA = JSON.parse(
       ((cA?.result as { content: Array<{ text: string }> }).content[0]).text,
     ).created;
+    expect(createdA.id).toBe('field-picker');
+
+    // Rejects overly long design (> 800 chars) to prevent context/JSON bloat
+    const tooLongDesign = handleMcpRequest(
+      {
+        id: 31,
+        method: 'tools/call',
+        params: {
+          name: 'modtree_update_module',
+          arguments: { workspacePath: wsA, moduleId: createdA.id, design: '长'.repeat(850) },
+        },
+      },
+      dataDir,
+    );
+    expect((tooLongDesign?.result as { isError?: boolean }).isError).toBe(true);
 
     // Workspace B stays completely isolated (0 modules)
     const treeB = handleMcpRequest(

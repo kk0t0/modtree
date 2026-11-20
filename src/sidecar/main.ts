@@ -51,7 +51,7 @@ import {
 } from '../core/types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const UI_VERSION = '0.1.3';
+const UI_VERSION = '0.1.4';
 const ID_RE = /^[0-9a-f-]{8,}$/i;
 
 const MIME_BY_EXT: Record<string, string> = {

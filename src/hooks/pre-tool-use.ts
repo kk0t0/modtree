@@ -49,10 +49,55 @@ const DANGEROUS_GIT_RE =
   /\bgit\s+(?:merge|rebase|push|worktree\s+remove|reset\s+--hard|clean\s+-[a-z]*f|branch\s+-[dD]|checkout\s+(?:-b\s+)?(?:main|master)\b|switch\s+(?:main|master)\b)/i;
 
 const WRITE_REDIRECT_OR_MUTATION_RE =
-  /(?:^|[^0-9])>>?\s*[^&]|(?:Set-Content|Add-Content|Out-File|New-Item|Remove-Item|Move-Item|Copy-Item|Rename-Item)\b|\b(?:rm|mv|cp|mkdir|rmdir|touch|sed\s+-i|tee)\b|\bgit\s+(?:add|commit|stash|checkout|switch|apply|cherry-pick)\b/i;
+  /(?:^|[^0-9])>>?\s*[^&]|(?:Set-Content|Add-Content|Out-File|New-Item|Remove-Item|Move-Item|Copy-Item|Rename-Item)\b|\b(?:rm|mv|cp|mkdir|rmdir|touch|sed\s+-i|tee)\b|\bgit\s+(?:(?:-C\s+(?:"[^"]+"|'[^']+'|\S+)\s+)*)(?:add|commit|stash|checkout|switch|apply|cherry-pick|reset|clean)\b/i;
 
-const READONLY_CMD_RE =
-  /^\s*(?:Set-Location\s+[^;]+;\s*)?(?:cd\s+[^;&]+(?:&&|;)\s*)?(?:git\s+(?:status|diff|log|show|rev-parse|merge-base|branch(?:\s+--list|\s+-a|\s+-v)?|ls-files|describe)|(?:npm|pnpm|yarn)\s+(?:test|run\s+(?:test|typecheck|lint|check))|(?:npx\s+)?(?:vitest|jest|tsc\s+--noEmit|eslint)|pytest|go\s+test|cargo\s+(?:test|check)|rg\b|Select-String\b|Get-ChildItem\b|Get-Content\b|ls\b|dir\b|cat\b|head\b|tail\b|pwd\b)/i;
+const READONLY_SEGMENT_RE =
+  /^(?:Set-Location\b.*|cd\b.*|Write-Output\b.*|echo\b.*|git\s+(?:(?:-C\s+(?:"[^"]+"|'[^']+'|\S+)\s+)*)(?:status|diff|log|show|rev-parse|merge-base|branch(?:\s+(?:--list|-a|-v|-vv))?|ls-files|describe|worktree\s+list)\b.*|node\s+(?:--test|-v|--version)\b.*|python(?:3)?\s+(?:--version|-V|-m\s+(?:unittest|pytest))\b.*|(?:npm|pnpm|yarn)\s+(?:test|run\s+(?:test|typecheck|lint|check))\b.*|(?:npx\s+)?(?:vitest|jest|tsc\s+--noEmit|eslint)\b.*|pytest\b.*|go\s+test\b.*|cargo\s+(?:test|check)\b.*|rg\b.*|Select-String\b.*|Get-ChildItem\b.*|Get-Content\b.*|ls\b.*|dir\b.*|cat\b.*|head\b.*|tail\b.*|pwd\b.*)$/i;
+
+function splitCommandSegments(cmd: string): string[] {
+  const segments: string[] = [];
+  let cur = '';
+  let quote: '"' | "'" | null = null;
+  for (let i = 0; i < cmd.length; i++) {
+    const ch = cmd[i];
+    if (quote) {
+      cur += ch;
+      if (ch === quote && cmd[i - 1] !== '\\') quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      cur += ch;
+      continue;
+    }
+    if (ch === ';') {
+      if (cur.trim()) segments.push(cur.trim());
+      cur = '';
+      continue;
+    }
+    if (ch === '&' && cmd[i + 1] === '&') {
+      if (cur.trim()) segments.push(cur.trim());
+      cur = '';
+      i++;
+      continue;
+    }
+    cur += ch;
+  }
+  if (cur.trim()) segments.push(cur.trim());
+  return segments;
+}
+
+export function isReadonlyCommand(cmd: string): boolean {
+  if (!cmd.trim()) return true;
+  if (DANGEROUS_GIT_RE.test(cmd) || WRITE_REDIRECT_OR_MUTATION_RE.test(cmd)) {
+    return false;
+  }
+  // Reject subshells / backticks / command substitution in strict read-only check
+  if (/`|\$\(/.test(cmd)) return false;
+  const segments = splitCommandSegments(cmd);
+  if (segments.length === 0) return false;
+  return segments.every((seg) => READONLY_SEGMENT_RE.test(seg));
+}
 
 function extractTargetFilePath(args: Record<string, unknown> | undefined, baseDir: string): string {
   if (!args) return '';
@@ -150,7 +195,7 @@ export function evaluatePreToolUse(
     }
 
     if (mod.stage === 'Plan' || mod.stage === 'Review') {
-      const isReadonly = READONLY_CMD_RE.test(cmd) && !WRITE_REDIRECT_OR_MUTATION_RE.test(cmd);
+      const isReadonly = isReadonlyCommand(cmd);
       if (isReadonly) {
         if (effGit.mode === 'worktree' && effGit.worktreePath) {
           const rewritten = prefixCommandWithWorktree(cmd, effGit.worktreePath, platform);

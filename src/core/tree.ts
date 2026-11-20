@@ -11,14 +11,31 @@ import {
 } from './types.js';
 
 export const MAX_PROGRESS_LEN = 100;
+export const MAX_MCP_DESIGN_LEN = 800;
 
-export function slugifyModuleId(name: string, existing: Record<string, ModuleNode>): string {
+export function slugifyModuleId(
+  name: string,
+  existing: Record<string, ModuleNode>,
+  preferredSlug?: string,
+): string {
+  const fromPreferred = (preferredSlug || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 32);
+
   const ascii = name
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9\u4e00-\u9fff]+/g, '-')
     .replace(/^-+|-+$/g, '');
-  const base = ascii && /^[a-z0-9-]+$/.test(ascii) ? ascii.slice(0, 28) : `mod-${Date.now().toString(36).slice(-4)}`;
+  const base =
+    fromPreferred ||
+    (ascii && /^[a-z0-9-]+$/.test(ascii)
+      ? ascii.slice(0, 28)
+      : `mod-${Date.now().toString(36).slice(-4)}`);
   let candidate = base || 'mod';
   let i = 2;
   while (existing[candidate]) {
@@ -178,6 +195,7 @@ export function buildStageSessionMap(
 
 export interface CreateModuleInput {
   name: string;
+  slug?: string;
   parentId?: string | null;
   design?: string;
   dependsOn?: string[];
@@ -201,7 +219,7 @@ export function createModule(project: ProjectState, input: CreateModuleInput): M
     throw new Error(`同级已存在同名模块「${dup.name}」(${dup.id})，请直接复用或换名`);
   }
 
-  const id = slugifyModuleId(name, project.modules);
+  const id = slugifyModuleId(name, project.modules, input.slug);
   const maxOrder = siblings.reduce((acc, s) => Math.max(acc, s.order), -1);
 
   const dependsOn = (input.dependsOn || []).filter((depId) => depId !== id && Boolean(project.modules[depId]));

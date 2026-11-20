@@ -123,18 +123,24 @@ export function createModuleWorktree(
 
   const safeSlug = moduleSlug.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'mod';
   const prefix = gitConfig.branchPrefix || 'mod/';
-  let branch = `${prefix}${safeSlug}`;
+  // Avoid redundant prefix like "mod/mod-crwy" when fallback ID already starts with "mod-"
+  const prefixWord = prefix.replace(/[/\\-]+$/, '').toLowerCase();
+  const branchSlug =
+    prefixWord && safeSlug.toLowerCase().startsWith(`${prefixWord}-`)
+      ? safeSlug.slice(prefixWord.length + 1) || safeSlug
+      : safeSlug;
+  let branch = `${prefix}${branchSlug}`;
   let suffix = 2;
   while (tryGit(workspacePath, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`]) !== null) {
-    branch = `${prefix}${safeSlug}-${suffix++}`;
+    branch = `${prefix}${branchSlug}-${suffix++}`;
   }
 
   const worktreeRoot = resolve(workspacePath, worktreeDirName);
   mkdirSync(worktreeRoot, { recursive: true });
-  let worktreePath = join(worktreeRoot, safeSlug);
+  let worktreePath = join(worktreeRoot, branchSlug);
   let dirSuffix = 2;
   while (existsSync(worktreePath)) {
-    worktreePath = join(worktreeRoot, `${safeSlug}-${dirSuffix++}`);
+    worktreePath = join(worktreeRoot, `${branchSlug}-${dirSuffix++}`);
   }
 
   runGit(workspacePath, ['worktree', 'add', '-b', branch, worktreePath, overview.headCommit]);

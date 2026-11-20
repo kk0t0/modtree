@@ -1,28 +1,79 @@
 import { useState } from 'react';
-import type { ModuleNode } from '../../core/types.js';
+import type { ModuleNode, RepoGitOverview } from '../../core/types.js';
 
 interface MergeDialogProps {
-  mode: 'merge' | 'cleanup';
+  mode: 'merge' | 'cleanup' | 'dirty-wt';
   node: ModuleNode;
+  repoGit?: RepoGitOverview;
   hasReviewed: boolean;
   onCancel: () => void;
   onConfirmMerge: (strategy: 'squash' | 'no-ff', commitMessage: string) => Promise<void>;
   onConfirmCleanup: () => Promise<void>;
+  onConfirmCreateWorktree?: () => Promise<void>;
   onStartIndependentReview: () => Promise<void>;
 }
 
 export function MergeDialog({
   mode,
   node,
+  repoGit,
   hasReviewed,
   onCancel,
   onConfirmMerge,
   onConfirmCleanup,
+  onConfirmCreateWorktree,
   onStartIndependentReview,
 }: MergeDialogProps) {
   const [strategy, setStrategy] = useState<'squash' | 'no-ff'>('squash');
   const [commitMessage, setCommitMessage] = useState(`feat(${node.id}): ${node.name}`);
   const [busy, setBusy] = useState(false);
+
+  if (mode === 'dirty-wt') {
+    const previewFiles = (repoGit?.dirtyFiles || []).slice(0, 5);
+    return (
+      <div className="mt-modal-backdrop" role="dialog" aria-modal="true">
+        <div className="mt-modal">
+          <h2>⚠️ 主目录有未提交改动</h2>
+          <div className="mt-banner warn" style={{ marginBottom: 0 }}>
+            <div>
+              主目录当前有 <strong>{repoGit?.dirtyCount || 0} 个未提交文件</strong>
+              {previewFiles.length > 0 && (
+                <>
+                  （如 <code>{previewFiles.join(', ')}</code>
+                  {(repoGit?.dirtyCount || 0) > previewFiles.length ? ' 等' : ''}）
+                </>
+              )}
+              。
+            </div>
+            <div>
+              此时从 <code>HEAD</code> 切出的新 Worktree <strong>不会包含这些未提交文件</strong>
+              ，容易造成文件缺失或后续合并冲突。强烈建议先在主目录提交，再建 Worktree。
+            </div>
+          </div>
+          <div className="mt-row" style={{ justifyContent: 'flex-end' }}>
+            <button type="button" className="mt-primary" disabled={busy} onClick={onCancel}>
+              取消，先去提交主目录
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={async () => {
+                if (!onConfirmCreateWorktree) return;
+                setBusy(true);
+                try {
+                  await onConfirmCreateWorktree();
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              {busy ? '创建中…' : '仍从当前 HEAD 创建'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (mode === 'cleanup') {
     return (

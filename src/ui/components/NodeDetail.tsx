@@ -243,6 +243,29 @@ export function NodeDetail({
         )}
       </div>
 
+      {/* Prominent completion shortcut for main-dir modules in 待检查 */}
+      {node.status === '待检查' && (!isOwnWorktree || Boolean(node.git?.mergedCommit)) && (
+        <div
+          className="mt-gate-bar"
+          style={{
+            background: 'var(--mt-ok-bg)',
+            color: 'var(--mt-ok-fg)',
+            borderColor: 'var(--mt-ok-fg)',
+          }}
+        >
+          <span>当前模块待检查，验收无误后可一键收口</span>
+          <button
+            type="button"
+            className="mt-primary"
+            style={{ padding: '3px 9px', fontSize: 11.5 }}
+            disabled={busyAction !== null}
+            onClick={() => void runBusy('mark-done', () => onSetStatus('已完成'))}
+          >
+            {busyAction === 'mark-done' ? '更新中…' : '标为已完成 ✓'}
+          </button>
+        </div>
+      )}
+
       {/* Main workspace dirty/collision warning */}
       {showMainCollisionWarn && (
         <div className="mt-banner warn">
@@ -324,17 +347,25 @@ export function NodeDetail({
             )}
           </div>
 
-          {gitRuntime && effectiveGit.mode === 'worktree' && (
-            <div className="mt-muted" style={{ color: 'inherit', opacity: 0.9 }}>
-              {gitRuntime.worktreeExists ? (
-                <>
-                  领先 {gitRuntime.aheadBase} · 落后主干 {gitRuntime.behindBase} · 未提交{' '}
-                  {gitRuntime.worktreeDirtyCount}
-                </>
-              ) : (
-                'Worktree 目录不存在（可能已被手动删除）'
-              )}
-            </div>
+          {effectiveGit.mode === 'worktree' && (
+            node.git?.mergedCommit || effectiveGit.mergedCommit ? (
+              <div className="mt-muted" style={{ color: 'inherit', opacity: 0.95 }}>
+                ✅ 已合并至 {effectiveGit.baseBranch || 'main'}（
+                <code>{(node.git?.mergedCommit || effectiveGit.mergedCommit || '').slice(0, 7)}</code>
+                ），可安全清理临时 Worktree
+              </div>
+            ) : gitRuntime ? (
+              <div className="mt-muted" style={{ color: 'inherit', opacity: 0.9 }}>
+                {gitRuntime.worktreeExists ? (
+                  <>
+                    领先 {gitRuntime.aheadBase} · 落后主干 {gitRuntime.behindBase} · 未提交{' '}
+                    {gitRuntime.worktreeDirtyCount}
+                  </>
+                ) : (
+                  'Worktree 目录不存在（可能已被手动删除）'
+                )}
+              </div>
+            ) : null
           )}
 
           <div className="mt-row">
@@ -351,15 +382,17 @@ export function NodeDetail({
                     : '创建 Worktree'}
               </button>
             )}
-            {effectiveGit.mode === 'worktree' && (gitRuntime?.behindBase || 0) > 0 && (
-              <button
-                type="button"
-                disabled={busyAction !== null}
-                onClick={() => void runBusy('wt-sync', onSyncWorktree)}
-              >
-                {busyAction === 'wt-sync' ? '同步中…' : `同步主干 (+${gitRuntime?.behindBase})`}
-              </button>
-            )}
+            {effectiveGit.mode === 'worktree' &&
+              !(node.git?.mergedCommit || effectiveGit.mergedCommit) &&
+              (gitRuntime?.behindBase || 0) > 0 && (
+                <button
+                  type="button"
+                  disabled={busyAction !== null}
+                  onClick={() => void runBusy('wt-sync', onSyncWorktree)}
+                >
+                  {busyAction === 'wt-sync' ? '同步中…' : `同步主干 (+${gitRuntime?.behindBase})`}
+                </button>
+              )}
             {isOwnWorktree && !node.git?.mergedCommit && (
               <button
                 type="button"
@@ -373,7 +406,7 @@ export function NodeDetail({
             {isOwnWorktree && (
               <button
                 type="button"
-                className="mt-danger"
+                className={node.git?.mergedCommit ? 'mt-primary' : 'mt-danger'}
                 disabled={busyAction !== null}
                 onClick={onOpenCleanup}
               >

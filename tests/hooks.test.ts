@@ -100,6 +100,32 @@ describe('PreToolUse & PreInvocation hooks', () => {
     );
     expect(allowDiff.decision).toBe('allow');
 
+    // Exact read-only commands observed in real testui runs must be allowed cleanly
+    for (const roCmd of [
+      'git -C "E:\\testui" status; git -C "E:\\testui" log -n 5 2>&1',
+      'cd E:\\testui\\.worktrees\\mod-crwy; node --test tests/filterList.test.mjs',
+      'node -v; python --version',
+      'git -C E:\\testui status --short; Write-Output "---LOG---"; git -C E:\\testui log --oneline -n 5',
+    ]) {
+      expect(
+        evaluatePreToolUse(
+          { conversationId: convId, toolCall: { name: 'run_command', args: { CommandLine: roCmd } } },
+          dataDir,
+        ).decision,
+      ).toBe('allow');
+    }
+
+    // Chained mutation hidden after read-only command must still be caught
+    expect(
+      evaluatePreToolUse(
+        {
+          conversationId: convId,
+          toolCall: { name: 'run_command', args: { CommandLine: 'git status; git -C E:\\testui commit -m "x"' } },
+        },
+        dataDir,
+      ).decision,
+    ).toBe('force_ask');
+
     const askMutate = evaluatePreToolUse(
       {
         conversationId: convId,

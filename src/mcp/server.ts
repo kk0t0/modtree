@@ -16,6 +16,7 @@ import {
   createModule,
   getAncestors,
   getModulePathString,
+  MAX_MCP_DESIGN_LEN,
   MAX_PROGRESS_LEN,
   resolveEffectiveGit,
   setModuleStage,
@@ -88,7 +89,8 @@ export const MCP_TOOLS = [
         linkedFiles: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Relative file paths touched or reviewed for this module (merged into existing list).',
+          description:
+            'Relative file paths CREATED or MODIFIED by this module ONLY (do NOT include read-only reference files from other modules/base shell).',
         },
         reviewNotes: {
           type: 'string',
@@ -122,14 +124,21 @@ export const MCP_TOOLS = [
   {
     name: 'modtree_create_module',
     description:
-      'Create a top-level or child module node. Only call after user request or confirmation.',
+      'Create a top-level or child module node. Only call after user request or confirmation. For non-ASCII names, provide a short kebab-case English slug for clean IDs and Git branch names.',
     inputSchema: {
       type: 'object',
       properties: {
         workspacePath: { type: 'string' },
         name: { type: 'string' },
+        slug: {
+          type: 'string',
+          description: 'Optional short ASCII kebab-case slug (e.g. app-shell, filter-list, charts) for readable module ID and git branch names.',
+        },
         parentId: { type: ['string', 'null'], description: 'Parent module ID or null for top-level.' },
-        design: { type: 'string', description: 'Concise Markdown design (goal, constraints/interfaces, acceptance).' },
+        design: {
+          type: 'string',
+          description: `Concise Markdown design summary (<= ${MAX_MCP_DESIGN_LEN} chars): goal + public interface contracts + key acceptance points. Leave lengthy discussions in chat or repo docs.`,
+        },
         dependsOn: {
           type: 'array',
           items: { type: 'string' },
@@ -144,7 +153,7 @@ export const MCP_TOOLS = [
   {
     name: 'modtree_update_module',
     description:
-      'Update module metadata (name, design, parentId with cycle protection, linkedFiles, dependsOn). Automatically bumps rev.',
+      `Update module metadata (name, concise design <= ${MAX_MCP_DESIGN_LEN} chars, parentId with cycle protection, linkedFiles created/modified by this module, dependsOn). Automatically bumps rev.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -152,8 +161,15 @@ export const MCP_TOOLS = [
         moduleId: { type: 'string' },
         name: { type: 'string' },
         parentId: { type: ['string', 'null'] },
-        design: { type: 'string' },
-        linkedFiles: { type: 'array', items: { type: 'string' } },
+        design: {
+          type: 'string',
+          description: `Concise Markdown design summary (<= ${MAX_MCP_DESIGN_LEN} chars): goal + public contracts + key acceptance points.`,
+        },
+        linkedFiles: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Relative file paths created or modified by this module only.',
+        },
         dependsOn: { type: 'array', items: { type: 'string' } },
       },
       required: ['workspacePath', 'moduleId'],
@@ -386,13 +402,24 @@ export function handleMcpRequest(
       }
 
       if (toolName === 'modtree_create_module') {
+        const designText = typeof args.design === 'string' ? args.design.trim() : undefined;
+        if (designText && designText.length > MAX_MCP_DESIGN_LEN) {
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: errText(
+              `design 超过 ${MAX_MCP_DESIGN_LEN} 字上限（当前 ${designText.length} 字）。请精简为薄摘要（目标 + 关键对外接口契约 + 核心验收要点，建议 ≤ 500 字），长篇细节保留在对话或项目文档中。`,
+            ),
+          };
+        }
         const { project, result: created } = mutateProject(
           workspacePath,
           (proj) =>
             createModule(proj, {
               name: String(args.name || ''),
+              slug: typeof args.slug === 'string' ? args.slug : undefined,
               parentId: args.parentId === null || typeof args.parentId === 'string' ? args.parentId : null,
-              design: typeof args.design === 'string' ? args.design : undefined,
+              design: designText,
               dependsOn: Array.isArray(args.dependsOn)
                 ? args.dependsOn.filter((x): x is string => typeof x === 'string')
                 : undefined,
@@ -426,6 +453,16 @@ export function handleMcpRequest(
 
       if (toolName === 'modtree_update_module') {
         const moduleId = String(args.moduleId || '').trim();
+        const designText = typeof args.design === 'string' ? args.design.trim() : undefined;
+        if (designText && designText.length > MAX_MCP_DESIGN_LEN) {
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: errText(
+              `design 超过 ${MAX_MCP_DESIGN_LEN} 字上限（当前 ${designText.length} 字）。请精简为薄摘要（目标 + 关键对外接口契约 + 核心验收要点，建议 ≤ 500 字），长篇细节保留在对话或项目文档中。`,
+            ),
+          };
+        }
         const { project, result: updated } = mutateProject(
           workspacePath,
           (proj) =>
@@ -435,7 +472,7 @@ export function handleMcpRequest(
                 args.parentId === null || typeof args.parentId === 'string'
                   ? args.parentId
                   : undefined,
-              design: typeof args.design === 'string' ? args.design : undefined,
+              design: designText,
               linkedFiles: Array.isArray(args.linkedFiles)
                 ? args.linkedFiles.filter((x): x is string => typeof x === 'string')
                 : undefined,

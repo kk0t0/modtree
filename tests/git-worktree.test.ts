@@ -100,6 +100,12 @@ describe('real Git worktree lifecycle integration', () => {
     expect(existsSync(wt.worktreePath)).toBe(false);
   });
 
+  it('deduplicates mod/ branch prefix when module ID already starts with mod-', () => {
+    const wt = createModuleWorktree(repoDir, 'mod-crwy', DEFAULT_GIT_CONFIG);
+    expect(wt.branch).toBe('mod/crwy');
+    expect(wt.worktreePath.replace(/\\/g, '/')).toMatch(/\.worktrees\/crwy$/);
+  });
+
   it('aborts cleanly on merge conflict without leaving repo in dirty conflicted state', () => {
     const wt = createModuleWorktree(repoDir, 'conflict-mod', DEFAULT_GIT_CONFIG);
 

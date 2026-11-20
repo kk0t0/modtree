@@ -25,7 +25,7 @@ export function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [manualTheme, setManualTheme] = useState<'light' | 'dark' | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-  const [dialogMode, setDialogMode] = useState<'merge' | 'cleanup' | null>(null);
+  const [dialogMode, setDialogMode] = useState<'merge' | 'cleanup' | 'dirty-wt' | null>(null);
   const [toast, setToast] = useState<{ text: string; isErr?: boolean } | null>(null);
 
   const toastTimer = useRef<number | null>(null);
@@ -387,7 +387,7 @@ export function App() {
     }
   }
 
-  async function handleCreateWorktree() {
+  async function executeCreateWorktree() {
     if (!selectedView) return;
     try {
       const res = await apiPost<{
@@ -398,12 +398,22 @@ export function App() {
         moduleId: selectedView.node.id,
       });
       setSnapshot(res.snapshot);
+      setDialogMode(null);
       notify(
         `已创建 Worktree (${res.created.branch})${res.created.copiedEnvFiles.length ? `，拷贝 ${res.created.copiedEnvFiles.length} 个 env` : ''}`,
       );
     } catch (err) {
       notify(err instanceof Error ? err.message : String(err), true);
     }
+  }
+
+  async function handleCreateWorktree() {
+    if (!selectedView) return;
+    if ((snapshot?.repoGit.dirtyCount || 0) > 0) {
+      setDialogMode('dirty-wt');
+      return;
+    }
+    await executeCreateWorktree();
   }
 
   async function handleSyncWorktree() {
@@ -546,6 +556,7 @@ export function App() {
         <MergeDialog
           mode={dialogMode}
           node={selectedView.node}
+          repoGit={snapshot?.repoGit}
           hasReviewed={Boolean(
             selectedView.stageSessionMap.Review?.dedicated ||
               selectedView.node.stage === 'Review',
@@ -553,6 +564,7 @@ export function App() {
           onCancel={() => setDialogMode(null)}
           onConfirmMerge={handleConfirmMerge}
           onConfirmCleanup={handleConfirmCleanup}
+          onConfirmCreateWorktree={executeCreateWorktree}
           onStartIndependentReview={async () => {
             await handleSetStage('Review');
             await handleCreateSession('Review', true, '合并前独立终审');
