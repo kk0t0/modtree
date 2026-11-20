@@ -82,3 +82,14 @@
      - 如果共用文件（如 `App.tsx` 路由、`package.json`）真有小冲突 → 插件会自动 `merge --abort` 保持干净，你可以在 B 的会话里让 Agent 合并主干并解掉冲突、跑通测试；
    - 如有需要，在合并弹窗里点 **「先开独立审查会话」** 做一次终审；
    - 最后点 **「合并回主干」**（默认 **Squash**，1 个模块 1 条干净提交）→ 合并成功后按需点 **「清理 Worktree」** 二次确认删除临时目录和分支，模块节点与 `mergedCommit` 永久留档。
+
+---
+
+## 场景 6：内置 19 个工程技能如何随阶段自动发挥作用？
+
+`modtree` 已内置 19 个精选工程技能（源自 MIT 协议的 ECC，完整来源见 `THIRD_PARTY_NOTICES.md`），采用 **按阶段自动路由 + 渐进披露**：
+- **新开阶段会话时**：冷启动提示词只注入当前阶段对应的 5–8 个技能 ID 与触发条件（Agent 仅在命中场景时才读取对应 `SKILL.md`，不浪费上下文）。
+- **切阶段换挡时**：在侧栏把模块从 `Plan → Code` 或 `Code → Review` 切换后，旧会话下一轮发消息时由 `PreInvocation` Hook 自动推送新阶段的推荐技能列表。
+- **里程碑收口软引导**：在 `Code` 阶段准备将模块推到 `待检查` 前，建议按 `verification-loop` 跑 6 步验证闭环（构建/类型检查/Lint/测试/安全扫描/Diff 复核），再回写进度或进 `Review`。
+- **C++ / ESP32 自动嗅探**：仅当仓库根目录或模块关联文件检测到 `CMakeLists.txt`、`platformio.ini`、`sdkconfig`、`.cpp`/`.hpp` 或固件模块标识时，才会在 `Code`/`Review` 阶段附加 `cpp-coding-standards` 与 `cpp-testing`，对普通项目完全零干扰。
+- **主控与跨阶段兜底**：部署发布用 `deployment-patterns`；连续报错陷入循环用 `agent-introspection-debugging`；长会话过阶段节点先回写进度再用 `strategic-compact` 建议 `/compact` 或开新阶段会话。

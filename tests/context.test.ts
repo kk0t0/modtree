@@ -64,6 +64,45 @@ describe('4-layer context & drift detection', () => {
     });
     expect(codePrompt).toContain('本次改动主题：修中文乱码');
     expect(codePrompt).toContain('只读子代理');
+    expect(codePrompt).toContain('tdd-workflow');
+    expect(codePrompt).toContain('verification-loop');
+    expect(codePrompt).not.toContain('cpp-coding-standards');
+
+    // Review cold-start prompt gets Review skills
+    expect(prompt).toContain('security-review');
+    expect(prompt).toContain('api-design');
+    expect(prompt).not.toContain('tdd-workflow');
+
+    // Plan cold-start prompt gets Plan skills
+    const planPrompt = buildColdStartPrompt(project, child.id, { stage: 'Plan' });
+    expect(planPrompt).toContain('search-first');
+    expect(planPrompt).toContain('hexagonal-architecture');
+    expect(planPrompt).not.toContain('tdd-workflow');
+  });
+
+  it('injects compact stage skills when PreInvocation detects a stage switch', () => {
+    const project = createEmptyProject('/tmp/demo-proj');
+    const mod = createModule(project, {
+      name: 'ESP32 蓝牙固件',
+      slug: 'esp32-ble',
+      stage: 'Plan',
+    });
+    bindSessionToModule(project, mod.id, {
+      conversationId: '22222222-2222-2222-2222-222222222222',
+      title: 'Plan',
+      stage: 'Plan',
+      syncedRev: mod.rev,
+      syncedAncestorHash: computeAncestorAndDepHash(project, mod.id),
+      syncedStage: 'Plan',
+      syncedReviewNotesHash: computeReviewNotesHash(mod),
+    });
+    const rec = mod.sessions![0];
+    setModuleStage(project, mod.id, 'Code');
+    const injected = buildDriftInjectionMessage(project, mod.id, rec);
+    expect(injected).toContain('已切换为 Code 编码阶段');
+    expect(injected).toContain('tdd-workflow');
+    expect(injected).toContain('cpp-coding-standards');
+    expect(injected).toContain('cpp-testing');
   });
 
   it('detects drift when ancestor design, dependsOn design, stage, or reviewNotes changes', () => {

@@ -24,3 +24,14 @@
 - **Code**：动手前以磁盘最新文件为准，不凭历史聊天臆断代码现状；如绑定了 Worktree，严格在指定 `.worktrees/<slug>/` 内读写和运行命令。日常小改动与迭代可直接在本会话跑测试或调用只读子代理（如 `code-reviewer`）自查自修，不必频繁来回切换 `Review`。不要把一次性修 bug 或小改动建成子模块。
 - **Review（合并/收口前独立终审）**：只读终审，不直接改源码；发现阻塞问题时将具体问题清单覆盖写入 `reviewNotes` 并提示用户切回 `Code` 修复；审查通过时传 `clearReviewNotes: true` 并提示用户确认合并或标为已完成。
 - **跨节点中转**：绝不向其他模块的会话发消息；需要了解其他模块资料时按需调用 `modtree_get_module` / `modtree_get_tree`。
+
+## 5. 内置工程技能按阶段路由（渐进披露，按需读取）
+本插件内置 19 个精选工程技能（源自 MIT 协议的 ECC，详见 `THIRD_PARTY_NOTICES.md`）。仅在命中对应触发场景时读取 `SKILL.md`，不要一次性全量加载：
+- **Plan**：`search-first`（动手前先调研）、`hexagonal-architecture`（业务核与适配器解耦）、`api-design`、`database-migrations`、`error-handling`。
+- **Code**：`tdd-workflow`、`coding-standards`、`orch-refine-code`（行为不变的结构重构）、`backend-patterns`、`frontend-patterns`、`e2e-testing`、`git-workflow`、`verification-loop`（**软引导**：里程碑收尾准备将模块推到 `待检查` 前，建议跑完 6 步验证闭环再回写进度）。
+- **Review**：`security-review`、`verification-loop`、`coding-standards`、`api-design`、`error-handling`。
+- **主控 / 跨阶段通用**：
+  - `deployment-patterns`：合流上线、Docker 构建、停写备份与回滚核验时使用；
+  - `agent-introspection-debugging`：同一报错/测试反复失败卡循环时，先做可复现诊断再动手；
+  - `strategic-compact`：长会话完成一个阶段节点时，先回写状态/文档，再建议用户 `/compact` 或从侧栏开启新阶段会话。
+- **C++ / ESP32 固件按需**：仅在 C++ / 嵌入式固件仓库或模块中按需使用 `cpp-coding-standards`、`cpp-testing`。

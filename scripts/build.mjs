@@ -13,8 +13,12 @@ if (existsSync(distPlugin)) {
 }
 mkdirSync(distPlugin, { recursive: true });
 
-console.log('[build] Copying static plugin manifests...');
+console.log('[build] Copying static plugin manifests & bundled skills...');
 cpSync(resolve(root, 'plugin-static'), distPlugin, { recursive: true });
+const thirdPartyNotice = resolve(root, 'THIRD_PARTY_NOTICES.md');
+if (existsSync(thirdPartyNotice)) {
+  cpSync(thirdPartyNotice, resolve(distPlugin, 'THIRD_PARTY_NOTICES.md'));
+}
 
 console.log('[build] Building self-contained React sidebar UI (classic IIFE, zero CORS module fetches)...');
 const uiBuild = await esbuild({

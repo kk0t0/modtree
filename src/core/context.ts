@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { detectCppStack, formatStageSkillsPrompt } from './skills.js';
 import {
   getAncestors,
   getChildren,
@@ -179,7 +180,7 @@ export function buildColdStartPrompt(
     );
   } else if (stage === 'Code') {
     lines.push(
-      `阶段规则（Code）：代码以磁盘最新文件为准，动手前先重读相关文件；${effGit.mode === 'worktree' ? `严格只在 ${effGit.worktreePath} 内读写。` : '注意不要改动无关模块文件。'}日常迭代与小改动可直接在本会话跑测试或调用只读子代理（如 code-reviewer）自查自修，无需频繁切换 Review；本轮完成后自动调用 modtree_update_progress 回写精简停在/下一步。`,
+      `阶段规则（Code）：代码以磁盘最新文件为准，动手前先重读相关文件；${effGit.mode === 'worktree' ? `严格只在 ${effGit.worktreePath} 内读写。` : '注意不要改动无关模块文件。'}日常迭代与小改动可直接在本会话跑测试或调用只读子代理（如 code-reviewer）自查自修，无需频繁切换 Review；里程碑收尾标 待检查 前建议按 verification-loop 跑 6 步验证闭环；本轮完成后自动调用 modtree_update_progress 回写精简停在/下一步。`,
     );
   } else if (stage === 'Review') {
     const diffHint =
@@ -190,6 +191,15 @@ export function buildColdStartPrompt(
       `阶段规则（Review 合并前独立终审 · 只读）：对照设计要点与验收条件进行终审把关（${diffHint}）。禁止直接改源码；若发现阻塞问题请调用 modtree_update_progress 将具体问题清单写入 reviewNotes 并提示用户点「回 Code 修复」；审查通过则传 clearReviewNotes=true。`,
     );
   }
+
+  const cppStack = detectCppStack({
+    workspacePath: project.workspacePath,
+    workingDir: effGit.workingDir,
+    linkedFiles: mod.linkedFiles,
+    moduleName: mod.name,
+    slug: mod.id,
+  });
+  lines.push(formatStageSkillsPrompt(stage, { cppStack }));
 
   lines.push('提示：如需其他模块详情，请按需调用 modtree_get_module / modtree_get_tree。');
 
@@ -259,6 +269,14 @@ export function buildDriftInjectionMessage(
         `门禁提示：已切换为 Review 只读审查阶段，请基于 ${effGit.mode === 'worktree' && effGit.baseBranch ? `git diff ${effGit.baseBranch}...HEAD` : 'baseCommit/未提交改动与 linkedFiles'} 审查；发现问题写入 reviewNotes。`,
       );
     }
+    const cppStack = detectCppStack({
+      workspacePath: project.workspacePath,
+      workingDir: effGit.workingDir,
+      linkedFiles: mod.linkedFiles,
+      moduleName: mod.name,
+      slug: mod.id,
+    });
+    lines.push(formatStageSkillsPrompt(mod.stage, { cppStack, compact: true }));
   }
 
   return lines.join('\n');
